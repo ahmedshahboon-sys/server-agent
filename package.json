@@ -1,0 +1,26 @@
+{
+  "name": "server-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-safe project management agent core for remote MCP orchestration.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "build:tests": "tsc -p tsconfig.test.json",
+    "clean": "rm -rf dist .test-dist coverage",
+    "lint": "node scripts/lint.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build:tests && node --test .test-dist/tests/*.test.js .test-dist/tests/*/*.test.js",
+    "test:security": "npm run build:tests && node --test .test-dist/tests/security/*.test.js",
+    "security:secrets": "node scripts/check-secrets.mjs",
+    "deps:validate": "npm ls --all",
+    "validate": "npm run lint && npm run typecheck && npm run test && npm run build && npm run security:secrets"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.1",
+    "typescript": "5.9.2"
+  }
+}
