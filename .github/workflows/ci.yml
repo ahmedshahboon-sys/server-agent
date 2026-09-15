@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: ['main', 'phase/**']
+  pull_request:
+    branches: ['main']
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Lint, typecheck, tests, build, security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install development dependencies
+        run: npm install --ignore-scripts
+      - name: Validate dependency tree
+        run: npm run deps:validate
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit and integration tests
+        run: npm test
+      - name: Security regression tests
+        run: npm run test:security
+      - name: Build
+        run: npm run build
+      - name: Repository secret scan
+        run: npm run security:secrets
