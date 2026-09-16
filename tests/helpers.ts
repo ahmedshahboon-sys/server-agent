@@ -21,6 +21,7 @@ export function projectFixture(overrides: Partial<Omit<ProjectRecord, 'createdAt
     health: { type: 'http', path: '/health', timeoutMs: 5000 },
     commands: { build: ['npm', 'run', 'build'], test: ['npm', 'test'] },
     database: { adapter: 'postgresql', secretRef: 'PROJECT_A_DB_URL', defaultAccess: 'read', metadata: {} },
+    deployment: { strategy: 'none', branch: 'main', requireClean: true, validationRequired: true, restartService: false, healthRequired: true },
     permissions: ['project:read', 'files:read'],
     environmentRefs: ['PROJECT_A_DB_URL'],
     metadata: {},
