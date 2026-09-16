@@ -1,9 +1,25 @@
-# Recovery state foundations
+# Recovery and rollback
 
-Phase 2 adds durable task and job state in SQLite.
+Phase 4 implements evidence-driven recovery and guarded rollback on top of the durable task/job state introduced in Phase 2 and deployment records introduced in Phase 3.
 
-On Agent startup, tasks left in `RUNNING`, `DEPLOYING`, `HEALTH_CHECKING`, or `RECOVERING` are not assumed successful. They are moved to `RECOVERY_REQUIRED` before resume logic continues.
+## Recovery
 
-Jobs persist their pid, task/project relationship, command id, timestamps, status, exit code, and bounded output-file locations. After restart, a job recorded as `RUNNING` is checked for process liveness. A vanished process becomes `UNKNOWN`; Server Agent does not blindly execute it again.
+Interrupted tasks are never assumed successful and mutating work is never replayed automatically. A recovery assessment collects bounded, redacted evidence from the task checkpoint, deployment record, validation/job state, Git state, health history, and available project logs. The engine then records one of these decisions:
 
-Full evidence-driven recovery and rollback orchestration is Phase 4. Phase 2 only establishes durable state, checkpoints, process reconciliation, and retry/idempotency foundations.
+- `RESUME_RECOMMENDED` — a persistent checkpoint or confirmed deployment state exists. The caller may explicitly resume after reviewing evidence.
+- `ROLLBACK_REQUIRED` — a failed deployment has a last-known-good rollback reference.
+- `WAITING_FOR_USER` / `MANUAL_REQUIRED` — the agent cannot prove a safe automatic next step.
+
+Recovery attempts are bounded by `SERVER_AGENT_MAX_RECOVERY_ATTEMPTS` (default `3`). When the limit is reached, Server Agent stops retrying and moves the task to rollback-required or user-intervention state. There is no unlimited self-healing loop.
+
+## Rollback
+
+Rollback is deliberately split into `rollback_plan` and `rollback_execute`.
+
+A plan is `READY` only when all required evidence is safe: the last-known-good Git commit exists, the working tree is clean, current HEAD matches the deployed state, migration evidence permits code rollback, an explicit project rollback command is registered, and required project capabilities are enabled.
+
+The rollback command must contain `{target_commit}` and receives a full Git commit SHA. Generic `run_command` cannot invoke the rollback command. Immediately before execution the engine revalidates Git and migration state; any drift changes the plan to `BLOCKED` instead of guessing.
+
+Database rollback is not treated as equivalent to Git rollback. If migration state is unknown or the migration version changed, automatic database rollback is forbidden and manual intervention is required. Destructive database rollback is never invented by Server Agent.
+
+After code rollback, configured service restart and health validation run through the existing restricted service and health layers. A successful rollback places the task in `ROLLED_BACK`; a failed or unsafe rollback ends in a user-intervention state with redacted evidence.
