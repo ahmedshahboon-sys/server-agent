@@ -8,7 +8,7 @@ import { validateProjectInput } from './validation.js';
 type Row = {
   id: string; name: string; root: string; enabled: number; runtime: ProjectRecord['runtime'];
   service_name: string | null; domain: string | null; ports_json: string; health_json: string;
-  commands_json: string; database_json: string; permissions_json: string; environment_refs_json: string;
+  commands_json: string; database_json: string; deployment_json: string; permissions_json: string; environment_refs_json: string;
   metadata_json: string; created_at: string; updated_at: string;
 };
 
@@ -27,6 +27,7 @@ function mapRow(row: Row): ProjectRecord {
     health: parseJson(row.health_json),
     commands: parseJson(row.commands_json),
     database: parseJson(row.database_json),
+    deployment: parseJson(row.deployment_json),
     permissions: parseJson(row.permissions_json),
     environmentRefs: parseJson(row.environment_refs_json),
     metadata: parseJson(row.metadata_json),
@@ -54,13 +55,13 @@ export class ProjectRegistry implements ProjectStore {
     this.db.raw.prepare(`
       INSERT INTO projects (
         id, name, root, enabled, runtime, service_name, domain, ports_json, health_json,
-        commands_json, database_json, permissions_json, environment_refs_json, metadata_json,
+        commands_json, database_json, deployment_json, permissions_json, environment_refs_json, metadata_json,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id, input.name, input.root, input.enabled ? 1 : 0, input.runtime,
       input.serviceName ?? null, input.domain ?? null, JSON.stringify(input.ports), JSON.stringify(input.health),
-      JSON.stringify(input.commands), JSON.stringify(input.database), JSON.stringify(input.permissions),
+      JSON.stringify(input.commands), JSON.stringify(input.database), JSON.stringify(input.deployment), JSON.stringify(input.permissions),
       JSON.stringify(input.environmentRefs), JSON.stringify(input.metadata), timestamp, timestamp,
     );
     return this.getRequired(input.id);
@@ -74,12 +75,12 @@ export class ProjectRegistry implements ProjectStore {
     const timestamp = this.clock.now().toISOString();
     this.db.raw.prepare(`
       UPDATE projects SET name=?, root=?, enabled=?, runtime=?, service_name=?, domain=?, ports_json=?, health_json=?,
-        commands_json=?, database_json=?, permissions_json=?, environment_refs_json=?, metadata_json=?, updated_at=?
+        commands_json=?, database_json=?, deployment_json=?, permissions_json=?, environment_refs_json=?, metadata_json=?, updated_at=?
       WHERE id=?
     `).run(
       candidate.name, candidate.root, candidate.enabled ? 1 : 0, candidate.runtime,
       candidate.serviceName ?? null, candidate.domain ?? null, JSON.stringify(candidate.ports), JSON.stringify(candidate.health),
-      JSON.stringify(candidate.commands), JSON.stringify(candidate.database), JSON.stringify(candidate.permissions),
+      JSON.stringify(candidate.commands), JSON.stringify(candidate.database), JSON.stringify(candidate.deployment), JSON.stringify(candidate.permissions),
       JSON.stringify(candidate.environmentRefs), JSON.stringify(candidate.metadata), timestamp, projectId,
     );
     return this.getRequired(projectId);

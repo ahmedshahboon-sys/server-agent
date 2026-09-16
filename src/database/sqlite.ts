@@ -119,6 +119,65 @@ const BASE_MIGRATIONS = [
       );
     `,
   },
+
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE projects ADD COLUMN deployment_json TEXT NOT NULL
+        DEFAULT '{"strategy":"none","requireClean":true,"validationRequired":true,"restartService":false,"healthRequired":true}';
+
+      CREATE TABLE IF NOT EXISTS deployments (
+        deployment_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        git_commit_before TEXT,
+        git_commit_after TEXT,
+        files_changed_json TEXT NOT NULL,
+        commands_json TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT,
+        service TEXT,
+        health_check_json TEXT,
+        precheck_json TEXT NOT NULL,
+        result_json TEXT,
+        rollback_available INTEGER NOT NULL CHECK (rollback_available IN (0,1)),
+        error_json TEXT,
+        FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+        FOREIGN KEY(project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_deployments_project_time ON deployments(project_id, start_time);
+      CREATE INDEX IF NOT EXISTS idx_deployments_task ON deployments(task_id);
+
+      CREATE TABLE IF NOT EXISTS health_checks (
+        health_check_id TEXT PRIMARY KEY,
+        task_id TEXT,
+        deployment_id TEXT,
+        project_id TEXT NOT NULL,
+        checked_at TEXT NOT NULL,
+        state TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+        FOREIGN KEY(deployment_id) REFERENCES deployments(deployment_id),
+        FOREIGN KEY(project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_health_checks_project_time ON health_checks(project_id, checked_at);
+
+      CREATE TABLE IF NOT EXISTS database_audit (
+        audit_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        statement_hash TEXT NOT NULL,
+        row_count INTEGER,
+        success INTEGER NOT NULL CHECK (success IN (0,1)),
+        error_json TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_database_audit_project_time ON database_audit(project_id, created_at);
+    `,
+  },
 ] as const;
 
 export class SqliteDatabase {

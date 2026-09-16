@@ -34,6 +34,23 @@ export class GitService {
     return this.read(projectId, principal, ['git', 'branch', '--show-current']);
   }
 
+  public headCommit(projectId: string, principal: Principal): Promise<ProcessExecutionResult> {
+    return this.read(projectId, principal, ['git', 'rev-parse', 'HEAD']);
+  }
+
+  public changedFiles(projectId: string, principal: Principal): Promise<ProcessExecutionResult> {
+    return this.read(projectId, principal, ['git', 'diff', '--name-only', '--']);
+  }
+
+  public diffStat(projectId: string, principal: Principal): Promise<ProcessExecutionResult> {
+    return this.read(projectId, principal, ['git', 'diff', '--stat', '--']);
+  }
+
+  public diffBetween(projectId: string, principal: Principal, baseCommit: string, headCommit: string): Promise<ProcessExecutionResult> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(baseCommit) || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headCommit)) throw new ValidationError('Git commit references must be full SHAs');
+    return this.read(projectId, principal, ['git', 'diff', '--name-only', `${baseCommit}..${headCommit}`, '--']);
+  }
+
   public async commit(projectId: string, principal: Principal, message: string, paths: readonly string[] = []): Promise<ProcessExecutionResult> {
     this.authorizer.assertAllowed(principal, 'git:write', projectId);
     if (message.trim().length < 3 || message.length > 200) throw new ValidationError('Commit message must be 3-200 characters');

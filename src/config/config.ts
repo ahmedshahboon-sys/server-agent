@@ -12,6 +12,10 @@ export interface ServerAgentConfig {
   readonly commandTimeoutMs: number;
   readonly maxFixAttempts: number;
   readonly maxConcurrentJobs: number;
+  readonly databaseQueryTimeoutMs: number;
+  readonly databaseMaxRows: number;
+  readonly databaseMaxResultBytes: number;
+  readonly maxLogOutputBytes: number;
 }
 
 const LOG_LEVELS = new Set<LogLevel>(['debug', 'info', 'warn', 'error']);
@@ -38,5 +42,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerAgentCon
     commandTimeoutMs: positiveInt(env.SERVER_AGENT_COMMAND_TIMEOUT_MS, 120_000, 'SERVER_AGENT_COMMAND_TIMEOUT_MS'),
     maxFixAttempts: positiveInt(env.SERVER_AGENT_MAX_FIX_ATTEMPTS, 3, 'SERVER_AGENT_MAX_FIX_ATTEMPTS'),
     maxConcurrentJobs: positiveInt(env.SERVER_AGENT_MAX_CONCURRENT_JOBS, 1, 'SERVER_AGENT_MAX_CONCURRENT_JOBS'),
+    databaseQueryTimeoutMs: positiveInt(env.SERVER_AGENT_DATABASE_QUERY_TIMEOUT_MS, 10_000, 'SERVER_AGENT_DATABASE_QUERY_TIMEOUT_MS'),
+    databaseMaxRows: positiveInt(env.SERVER_AGENT_DATABASE_MAX_ROWS, 500, 'SERVER_AGENT_DATABASE_MAX_ROWS'),
+    databaseMaxResultBytes: positiveInt(env.SERVER_AGENT_DATABASE_MAX_RESULT_BYTES, 1_048_576, 'SERVER_AGENT_DATABASE_MAX_RESULT_BYTES'),
+    maxLogOutputBytes: positiveInt(env.SERVER_AGENT_MAX_LOG_OUTPUT_BYTES, 262_144, 'SERVER_AGENT_MAX_LOG_OUTPUT_BYTES'),
   };
 }

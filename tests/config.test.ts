@@ -12,6 +12,8 @@ describe('loadConfig', () => {
     assert.equal(config.commandTimeoutMs, 120_000);
     assert.equal(config.maxFixAttempts, 3);
     assert.equal(config.maxConcurrentJobs, 1);
+    assert.equal(config.databaseQueryTimeoutMs, 10_000);
+    assert.equal(config.databaseMaxRows, 500);
   });
 
   it('rejects invalid bounded values', () => {

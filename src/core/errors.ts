@@ -42,3 +42,15 @@ export class AttemptLimitError extends ServerAgentError {
 export class ConflictError extends ServerAgentError {
   public constructor(message: string) { super(message, 'CONFLICT'); }
 }
+
+export class DestructiveOperationError extends ServerAgentError {
+  public constructor(message = 'Destructive operation is blocked') { super(message, 'DESTRUCTIVE_OPERATION_BLOCKED'); }
+}
+
+export class HealthCheckError extends ServerAgentError {
+  public constructor(message = 'Health check failed') { super(message, 'HEALTH_CHECK_FAILED'); }
+}
+
+export class DatabaseTimeoutError extends ServerAgentError {
+  public constructor(message = 'Database operation timed out') { super(message, 'DATABASE_TIMEOUT'); }
+}
