@@ -118,6 +118,7 @@ export class McpHttpTransport {
     let meta: JsonObject;
     try { meta = record(rpc.params['_meta'], 'params._meta'); } catch (error) { const safe = safeRemoteError(error); return this.protocolError(rpc.id, 400, -32602, safe.message, safe.data); }
     if (meta[PROTOCOL_VERSION_KEY] !== MCP_PROTOCOL_VERSION) return this.protocolError(rpc.id, 400, -32020, 'Request protocol metadata does not match MCP-Protocol-Version');
+    if (meta[CLIENT_CAPABILITIES_KEY] === undefined) return this.protocolError(rpc.id, 400, -32020, 'Client capabilities metadata is required');
     try { record(meta[CLIENT_CAPABILITIES_KEY], `params._meta.${CLIENT_CAPABILITIES_KEY}`); }
     catch { return this.protocolError(rpc.id, 400, -32020, 'Client capabilities metadata is required'); }
 
