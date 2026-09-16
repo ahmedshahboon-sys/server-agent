@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { REDACTED, redactString, redactValue } from '../../src/security/redaction.js';
+import { REDACTED, redactError, redactString, redactValue } from '../../src/security/redaction.js';
 
 describe('secret redaction', () => {
   it('redacts secret-like object keys recursively', () => {
@@ -14,6 +14,14 @@ describe('secret redaction', () => {
     assert.equal(output.includes('abc123'), false);
     assert.equal(output.includes('user:pass'), false);
     assert.equal(output.includes(REDACTED), true);
+  });
+
+  it('redacts known runtime secret values and Error details', () => {
+    assert.equal(redactString('value=known-secret-value', ['known-secret-value']).includes('known-secret-value'), false);
+    const error = Object.assign(new Error('TOKEN=abc123 failure'), { code: 'TEST' });
+    const safe = redactError(error);
+    assert.equal(String(safe.message).includes('abc123'), false);
+    assert.equal(safe.code, 'TEST');
   });
 
   it('redacts private key blocks', () => {
