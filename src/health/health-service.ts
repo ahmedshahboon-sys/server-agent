@@ -13,7 +13,7 @@ import { redactValue } from '../security/redaction.js';
 
 export interface HttpProbeResult { readonly ok: boolean; readonly statusCode: number | null; readonly latencyMs: number; readonly error?: string; }
 export interface HttpProbe { check(url: URL, timeoutMs: number, expectedStatus: readonly number[]): Promise<HttpProbeResult>; }
-export interface ResolvedAddress { readonly address: string; readonly family: 4 | 6; }
+export interface ResolvedAddress { readonly address: string; readonly family: number; }
 export type HostResolver = (hostname: string) => Promise<readonly ResolvedAddress[]>;
 
 const BLOCKED_ADDRESSES = new net.BlockList();
@@ -26,7 +26,7 @@ for (const [address, prefix] of [
   ['::',128],['::1',128],['fc00::',7],['fe80::',10],['ff00::',8],['2001:db8::',32],['::ffff:0:0',96],
 ] as const) BLOCKED_ADDRESSES.addSubnet(address, prefix, 'ipv6');
 
-export function isPublicNetworkAddress(address: string, family?: 4 | 6): boolean {
+export function isPublicNetworkAddress(address: string, family?: number): boolean {
   const detected = family ?? net.isIP(address);
   if (detected !== 4 && detected !== 6) return false;
   return !BLOCKED_ADDRESSES.check(address, detected === 4 ? 'ipv4' : 'ipv6');
