@@ -26,6 +26,28 @@ export function validateProjectInput(project: Omit<ProjectRecord, 'createdAt' | 
   if (project.ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)) {
     throw new ValidationError('Project ports must be valid TCP/UDP port numbers');
   }
+
+  if (project.deployment.branch !== undefined && !/^[A-Za-z0-9._/-]{1,128}$/.test(project.deployment.branch)) {
+    throw new ValidationError('Deployment branch contains invalid characters');
+  }
+  if (project.deployment.strategy === 'command' && project.commands.deploy === undefined) {
+    throw new ValidationError('Command deployment strategy requires commands.deploy');
+  }
+  if (project.deployment.restartService && project.serviceName === undefined) {
+    throw new ValidationError('Deployment restart requires serviceName');
+  }
+  if (project.health.path !== undefined && !project.health.path.startsWith('/')) {
+    throw new ValidationError('Health path must start with /');
+  }
+  if (project.health.port !== undefined && !project.ports.includes(project.health.port)) {
+    throw new ValidationError('Health port must be one of the registered project ports');
+  }
+  if (project.health.expectedStatus !== undefined && project.health.expectedStatus.some((status) => !Number.isInteger(status) || status < 100 || status > 599)) {
+    throw new ValidationError('Health expectedStatus values must be HTTP status codes');
+  }
+  if (project.deployment.healthRequired && project.health.type === 'none') {
+    throw new ValidationError('Health-required deployment must configure a health check');
+  }
   for (const reference of project.environmentRefs) {
     if (!/^[A-Z][A-Z0-9_]{1,127}$/.test(reference)) throw new ValidationError('Environment references must be variable names, not values');
   }

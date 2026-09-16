@@ -11,7 +11,10 @@ export type ProjectPermission =
   | 'database:read'
   | 'database:write'
   | 'deploy:run'
-  | 'health:read';
+  | 'health:read'
+  | 'logs:read'
+  | 'service:read'
+  | 'service:restart';
 
 export interface CommandConfig {
   readonly build?: readonly string[];
@@ -29,9 +32,21 @@ export interface DatabaseConfig {
 }
 
 export interface HealthConfig {
-  readonly type: 'none' | 'http' | 'service' | 'composite';
+  readonly type: 'none' | 'http' | 'service' | 'database' | 'composite';
+  readonly scheme?: 'http' | 'https';
+  readonly port?: number;
   readonly path?: string;
   readonly timeoutMs?: number;
+  readonly expectedStatus?: readonly number[];
+}
+
+export interface DeploymentConfig {
+  readonly strategy: 'none' | 'command' | 'restart-only';
+  readonly branch?: string;
+  readonly requireClean: boolean;
+  readonly validationRequired: boolean;
+  readonly restartService: boolean;
+  readonly healthRequired: boolean;
 }
 
 export interface ProjectRecord {
@@ -46,6 +61,7 @@ export interface ProjectRecord {
   readonly health: HealthConfig;
   readonly commands: CommandConfig;
   readonly database: DatabaseConfig;
+  readonly deployment: DeploymentConfig;
   readonly permissions: readonly ProjectPermission[];
   readonly environmentRefs: readonly string[];
   readonly metadata: Readonly<Record<string, unknown>>;
@@ -76,3 +92,7 @@ export type TaskStatus =
   | 'CANCELLED';
 
 export type JobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'UNKNOWN';
+
+export type DatabaseQueryClassification = 'READ' | 'WRITE' | 'DESTRUCTIVE' | 'TRANSACTION_CONTROL' | 'UNKNOWN';
+export type HealthState = 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'UNKNOWN';
+export type DeploymentStatus = 'PREPARING' | 'DEPLOYING' | 'HEALTH_CHECKING' | 'SUCCEEDED' | 'FAILED';
