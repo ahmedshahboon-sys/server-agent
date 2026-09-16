@@ -11,18 +11,18 @@ permissions:
 
 jobs:
   validate:
-    name: Lint, typecheck, tests, build, security
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Lint, typecheck, tests, build, security, package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
       - name: Install development dependencies
-        run: npm install --ignore-scripts
+        run: npm install --ignore-scripts --no-audit --no-fund --package-lock=false
       - name: Validate dependency tree
         run: npm run deps:validate
       - name: Lint
@@ -37,3 +37,9 @@ jobs:
         run: npm run build
       - name: Repository secret scan
         run: npm run security:secrets
+      - name: Validate install package
+        run: npm run validate:package
+      - name: Validate install shell syntax
+        run: bash -n install/install.sh install/uninstall.sh
+      - name: Runtime and memory sanity
+        run: npm run perf:sanity

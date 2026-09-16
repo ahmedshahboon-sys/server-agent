@@ -109,6 +109,8 @@ function buildHealthUrl(project: ProjectRecord): URL {
   const hostname=project.domain.toLowerCase();
   if (hostname.includes('@') || hostname.includes('/') || hostname.includes(':')) throw new ValidationError('Project domain must be a hostname only');
   if (hostname==='localhost'||hostname.endsWith('.localhost')||hostname==='metadata.google.internal') throw new ValidationError('Private or local HTTP health targets are not allowed');
+  const literal = net.isIP(hostname);
+  if ((literal === 4 || literal === 6) && !isPublicNetworkAddress(hostname, literal)) throw new ValidationError('Private or local HTTP health targets are not allowed');
   const scheme = project.health.scheme ?? 'https';
   const port = project.health.port === undefined ? '' : `:${project.health.port}`;
   return new URL(`${scheme}://${hostname}${port}${project.health.path}`);
