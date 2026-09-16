@@ -19,6 +19,10 @@ export class AuthorizationError extends ServerAgentError {
   public constructor(message = 'Access denied') { super(message, 'AUTHORIZATION_DENIED'); }
 }
 
+export class AuthenticationError extends ServerAgentError {
+  public constructor(message = 'Authentication required') { super(message, 'AUTHENTICATION_REQUIRED'); }
+}
+
 export class SandboxViolationError extends ServerAgentError {
   public constructor(message: string) { super(message, 'SANDBOX_VIOLATION'); }
 }
@@ -53,4 +57,16 @@ export class HealthCheckError extends ServerAgentError {
 
 export class DatabaseTimeoutError extends ServerAgentError {
   public constructor(message = 'Database operation timed out') { super(message, 'DATABASE_TIMEOUT'); }
+}
+
+export class RecoveryError extends ServerAgentError {
+  public constructor(message: string, details?: Readonly<Record<string, unknown>>) { super(message, 'RECOVERY_ERROR', details); }
+}
+
+export class RollbackBlockedError extends ServerAgentError {
+  public constructor(message = 'Rollback is blocked by safety checks') { super(message, 'ROLLBACK_BLOCKED'); }
+}
+
+export class ProtocolError extends ServerAgentError {
+  public constructor(message: string, code = 'MCP_PROTOCOL_ERROR') { super(message, code); }
 }

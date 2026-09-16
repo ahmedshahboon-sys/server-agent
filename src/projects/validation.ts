@@ -48,6 +48,14 @@ export function validateProjectInput(project: Omit<ProjectRecord, 'createdAt' | 
   if (project.deployment.healthRequired && project.health.type === 'none') {
     throw new ValidationError('Health-required deployment must configure a health check');
   }
+  if (project.permissions.includes('recovery:run') && !project.permissions.includes('recovery:read')) {
+    throw new ValidationError('recovery:run requires recovery:read for evidence collection');
+  }
+  if (project.permissions.includes('rollback:run')) {
+    if (!project.permissions.includes('git:read')) throw new ValidationError('rollback:run requires git:read');
+    if (!project.permissions.includes('commands:run')) throw new ValidationError('rollback:run requires commands:run');
+    if (project.deployment.healthRequired && !project.permissions.includes('health:read')) throw new ValidationError('rollback:run requires health:read when rollback health validation is required');
+  }
   for (const reference of project.environmentRefs) {
     if (!/^[A-Z][A-Z0-9_]{1,127}$/.test(reference)) throw new ValidationError('Environment references must be variable names, not values');
   }
