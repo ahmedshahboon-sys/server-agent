@@ -21,4 +21,5 @@ export interface ProjectStore {
   create(input: Omit<ProjectRecord, 'createdAt' | 'updatedAt'>): ProjectRecord;
   update(projectId: string, patch: Partial<Omit<ProjectRecord, 'id' | 'createdAt' | 'updatedAt'>>): ProjectRecord;
   disable(projectId: string): ProjectRecord;
+  remove(projectId: string): void;
 }
