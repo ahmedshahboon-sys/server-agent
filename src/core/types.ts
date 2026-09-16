@@ -18,6 +18,7 @@ export interface CommandConfig {
   readonly test?: readonly string[];
   readonly deploy?: readonly string[];
   readonly allowed?: Readonly<Record<string, readonly string[]>>;
+  readonly validation?: readonly string[];
 }
 
 export interface DatabaseConfig {
@@ -58,3 +59,20 @@ export interface Principal {
   readonly projectScopes: readonly string[];
   readonly permissions: readonly ProjectPermission[];
 }
+
+export type TaskStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'PAUSED'
+  | 'FAILED'
+  | 'WAITING_FOR_USER'
+  | 'RECOVERY_REQUIRED'
+  | 'DEPLOYING'
+  | 'HEALTH_CHECKING'
+  | 'RECOVERING'
+  | 'ROLLBACK_REQUIRED'
+  | 'ROLLING_BACK'
+  | 'COMPLETED'
+  | 'CANCELLED';
+
+export type JobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'UNKNOWN';
