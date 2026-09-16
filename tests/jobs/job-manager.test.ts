@@ -15,12 +15,20 @@ test('job manager persists command lifecycle and output locations', async()=>{
   registry.create(projectFixture({root:temp.path,permissions:['commands:run'],commands:{allowed:{ok:['node','-e','process.stdout.write("done")']}}}));
   const runner=new RestrictedCommandRunner(registry,new DefaultDenyAuthorizer(),{timeoutMs:1000,maxOutputBytes:1024});const jobs=new JobManager(db,runner,temp.path,1);
   try{const job=await jobs.start('project-a',principal,'ok');let current=jobs.get(job.jobId);for(let i=0;i<50&&current?.status==='RUNNING';i++){await sleep(20);current=jobs.get(job.jobId);}assert.equal(current?.status,'COMPLETED');assert.equal(current?.exitCode,0);assert.ok(current?.stdoutPath.endsWith('stdout.log'));}
-  finally{db.close();await temp.cleanup();}
+  finally{await jobs.shutdown();db.close();await temp.cleanup();}
 });
 
 test('restart reconciliation marks vanished running process UNKNOWN', async()=>{
   const temp=await tempDir('server-agent-job-');const db=new SqliteDatabase(':memory:');const registry=new ProjectRegistry(db);registry.create(projectFixture({root:temp.path}));
   const runner=new RestrictedCommandRunner(registry,new DefaultDenyAuthorizer(),{timeoutMs:1000,maxOutputBytes:1024});const jobs=new JobManager(db,runner,temp.path,1);
   try{const now=new Date().toISOString();db.raw.prepare('INSERT INTO jobs(job_id,task_id,project_id,command_id,pid,started_at,finished_at,status,exit_code,stdout_path,stderr_path,error_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('orphan',null,'project-a','x',99999999,now,null,'RUNNING',null,'/tmp/a','/tmp/b',null);assert.equal(jobs.reconcileAfterRestart(),1);assert.equal(jobs.get('orphan')?.status,'UNKNOWN');}
+  finally{await jobs.shutdown();db.close();await temp.cleanup();}
+});
+
+test('job manager shutdown cancels attached work and waits for durable terminal state', async()=>{
+  const temp=await tempDir('server-agent-job-');const db=new SqliteDatabase(':memory:');const registry=new ProjectRegistry(db);
+  registry.create(projectFixture({root:temp.path,permissions:['commands:run'],commands:{allowed:{slow:['node','-e','setInterval(()=>{},1000)']}}}));
+  const runner=new RestrictedCommandRunner(registry,new DefaultDenyAuthorizer(),{timeoutMs:10_000,maxOutputBytes:1024});const jobs=new JobManager(db,runner,temp.path,1);
+  try{const job=await jobs.start('project-a',principal,'slow');assert.equal(jobs.get(job.jobId)?.status,'RUNNING');await jobs.shutdown();assert.equal(jobs.get(job.jobId)?.status,'CANCELLED');}
   finally{db.close();await temp.cleanup();}
 });

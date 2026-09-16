@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
 import type { Authorizer, ProjectStore } from '../core/interfaces.js';
 import type { HealthState, Principal, ProjectRecord } from '../core/types.js';
@@ -10,19 +13,81 @@ import { redactValue } from '../security/redaction.js';
 
 export interface HttpProbeResult { readonly ok: boolean; readonly statusCode: number | null; readonly latencyMs: number; readonly error?: string; }
 export interface HttpProbe { check(url: URL, timeoutMs: number, expectedStatus: readonly number[]): Promise<HttpProbeResult>; }
+export interface ResolvedAddress { readonly address: string; readonly family: 4 | 6; }
+export type HostResolver = (hostname: string) => Promise<readonly ResolvedAddress[]>;
+
+const BLOCKED_ADDRESSES = new net.BlockList();
+for (const [address, prefix] of [
+  ['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],
+  ['192.0.0.0',24],['192.0.2.0',24],['192.168.0.0',16],['198.18.0.0',15],['198.51.100.0',24],['203.0.113.0',24],
+  ['224.0.0.0',4],['240.0.0.0',4],
+] as const) BLOCKED_ADDRESSES.addSubnet(address, prefix, 'ipv4');
+for (const [address, prefix] of [
+  ['::',128],['::1',128],['fc00::',7],['fe80::',10],['ff00::',8],['2001:db8::',32],['::ffff:0:0',96],
+] as const) BLOCKED_ADDRESSES.addSubnet(address, prefix, 'ipv6');
+
+export function isPublicNetworkAddress(address: string, family?: 4 | 6): boolean {
+  const detected = family ?? net.isIP(address);
+  if (detected !== 4 && detected !== 6) return false;
+  return !BLOCKED_ADDRESSES.check(address, detected === 4 ? 'ipv4' : 'ipv6');
+}
+
+async function systemResolve(hostname: string): Promise<readonly ResolvedAddress[]> {
+  const literal = net.isIP(hostname);
+  if (literal === 4 || literal === 6) return [{ address: hostname, family: literal }];
+  const results = await lookup(hostname, { all: true, verbatim: true });
+  return results.map((item) => ({ address: item.address, family: item.family }));
+}
+
+function safeResolvedAddresses(addresses: readonly ResolvedAddress[]): readonly ResolvedAddress[] {
+  if (addresses.length === 0) throw new ValidationError('Health target did not resolve to an address');
+  if (addresses.some((item) => !isPublicNetworkAddress(item.address, item.family))) {
+    throw new ValidationError('Health target resolves to a private or reserved network address');
+  }
+  return addresses;
+}
 
 export class FetchHttpProbe implements HttpProbe {
+  public constructor(private readonly resolver: HostResolver = systemResolve) {}
+
   public async check(url: URL, timeoutMs: number, expectedStatus: readonly number[]): Promise<HttpProbeResult> {
     if (!['http:', 'https:'].includes(url.protocol) || url.username !== '' || url.password !== '') throw new ValidationError('Unsafe health check URL');
     const started = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs); timer.unref();
     try {
-      const response = await fetch(url, { method: 'GET', redirect: 'error', signal: controller.signal, headers: { 'user-agent': 'server-agent-health/1' } });
-      return { ok: expectedStatus.includes(response.status), statusCode: response.status, latencyMs: Date.now() - started };
+      const addresses = safeResolvedAddresses(await this.resolver(url.hostname));
+      const target = addresses[0];
+      if (target === undefined) throw new ValidationError('Health target did not resolve to an address');
+      const statusCode = await this.requestPinned(url, target, timeoutMs);
+      return { ok: expectedStatus.includes(statusCode), statusCode, latencyMs: Date.now() - started };
     } catch (error) {
       return { ok: false, statusCode: null, latencyMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) };
-    } finally { clearTimeout(timer); }
+    }
+  }
+
+  private requestPinned(url: URL, target: ResolvedAddress, timeoutMs: number): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const base = {
+        hostname: target.address,
+        family: target.family,
+        port: url.port === '' ? (url.protocol === 'https:' ? 443 : 80) : Number(url.port),
+        path: `${url.pathname}${url.search}`,
+        method: 'GET',
+        headers: { host: url.host, 'user-agent': 'server-agent-health/1', connection: 'close' },
+      };
+      const request = url.protocol === 'https:'
+        ? https.request({ ...base, servername: url.hostname })
+        : http.request(base);
+      const timer = setTimeout(() => request.destroy(new Error('Health check timed out')), timeoutMs);
+      timer.unref();
+      request.once('response', (response) => {
+        clearTimeout(timer);
+        const status = response.statusCode ?? 0;
+        response.resume();
+        resolve(status);
+      });
+      request.once('error', (error) => { clearTimeout(timer); reject(error); });
+      request.end();
+    });
   }
 }
 
@@ -39,24 +104,11 @@ function combine(states: readonly HealthState[]): HealthState {
   return 'DEGRADED';
 }
 
-function isPrivateLiteral(hostname: string): boolean {
-  const kind = net.isIP(hostname);
-  if (kind === 4) {
-    const [a=0,b=0] = hostname.split('.').map(Number);
-    return a===0||a===10||a===127||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&b===168);
-  }
-  if (kind === 6) {
-    const lower=hostname.toLowerCase();
-    return lower==='::1'||lower==='::'||lower.startsWith('fc')||lower.startsWith('fd')||lower.startsWith('fe8')||lower.startsWith('fe9')||lower.startsWith('fea')||lower.startsWith('feb');
-  }
-  return false;
-}
-
 function buildHealthUrl(project: ProjectRecord): URL {
   if (project.domain === undefined || project.health.path === undefined) throw new ValidationError('HTTP health check requires project domain and health path');
   const hostname=project.domain.toLowerCase();
   if (hostname.includes('@') || hostname.includes('/') || hostname.includes(':')) throw new ValidationError('Project domain must be a hostname only');
-  if (hostname==='localhost'||hostname.endsWith('.localhost')||hostname==='metadata.google.internal'||isPrivateLiteral(hostname)) throw new ValidationError('Private or local HTTP health targets are not allowed');
+  if (hostname==='localhost'||hostname.endsWith('.localhost')||hostname==='metadata.google.internal') throw new ValidationError('Private or local HTTP health targets are not allowed');
   const scheme = project.health.scheme ?? 'https';
   const port = project.health.port === undefined ? '' : `:${project.health.port}`;
   return new URL(`${scheme}://${hostname}${port}${project.health.path}`);

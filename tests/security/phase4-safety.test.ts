@@ -43,7 +43,7 @@ test('MCP registry denies cross-project access, audits denial, and redacts tool 
   } finally { db.close(); }
 });
 
-test('MCP HTTP transport enforces Origin, auth, protocol headers, and secret-safe responses', async () => {
+test('MCP HTTP transport enforces Origin, auth, modern protocol metadata, and secret-safe responses', async () => {
   const tools = new McpToolRegistry(authorizer);
   tools.register({
     definition: { name: 'safe_probe', description: 'safe test probe', inputSchema: { type: 'object' } },
@@ -52,8 +52,12 @@ test('MCP HTTP transport enforces Origin, auth, protocol headers, and secret-saf
   });
   const principal = { id: 'remote-a', kind: 'remote' as const, projectScopes: ['project-a'], permissions: ['project:read'] as const };
   const transport = new McpHttpTransport(new StaticBearerAuthenticator(token, principal), tools, { path: '/mcp', maxBodyBytes: 16_384, allowedOrigins: ['https://chatgpt.com'] });
-  const body = JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'safe_probe', arguments: {}, _meta: { 'io.modelcontextprotocol/protocolVersion': MCP_PROTOCOL_VERSION } } });
+  const validMeta = { 'io.modelcontextprotocol/protocolVersion': MCP_PROTOCOL_VERSION, 'io.modelcontextprotocol/clientCapabilities': {} };
+  const body = JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'safe_probe', arguments: {}, _meta: validMeta } });
+  const missingCapabilitiesBody = JSON.stringify({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'safe_probe', arguments: {}, _meta: { 'io.modelcontextprotocol/protocolVersion': MCP_PROTOCOL_VERSION } } });
   const baseHeaders = { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'mcp-protocol-version': MCP_PROTOCOL_VERSION, 'mcp-method': 'tools/call', 'mcp-name': 'safe_probe' };
+  const missingCapabilities = await transport.handle({ method: 'POST', path: '/mcp', headers: { ...baseHeaders, origin: 'https://chatgpt.com' }, body: missingCapabilitiesBody });
+  assert.equal(missingCapabilities.status, 400);
   const badOrigin = await transport.handle({ method: 'POST', path: '/mcp', headers: { ...baseHeaders, origin: 'https://evil.example' }, body });
   assert.equal(badOrigin.status, 403);
   const badAuth = await transport.handle({ method: 'POST', path: '/mcp', headers: { ...baseHeaders, authorization: 'Bearer wrong-token-value-0123456789', origin: 'https://chatgpt.com' }, body });
