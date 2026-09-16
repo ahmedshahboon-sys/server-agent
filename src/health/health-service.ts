@@ -23,12 +23,13 @@ for (const [address, prefix] of [
   ['224.0.0.0',4],['240.0.0.0',4],
 ] as const) BLOCKED_ADDRESSES.addSubnet(address, prefix, 'ipv4');
 for (const [address, prefix] of [
-  ['::',128],['::1',128],['fc00::',7],['fe80::',10],['ff00::',8],['2001:db8::',32],['::ffff:0:0',96],
+  ['::',128],['::1',128],['fc00::',7],['fe80::',10],['ff00::',8],['2001:db8::',32],
 ] as const) BLOCKED_ADDRESSES.addSubnet(address, prefix, 'ipv6');
 
 export function isPublicNetworkAddress(address: string, family?: number): boolean {
   const detected = family ?? net.isIP(address);
   if (detected !== 4 && detected !== 6) return false;
+  if (detected === 6 && address.toLowerCase().startsWith('::ffff:')) return false;
   return !BLOCKED_ADDRESSES.check(address, detected === 4 ? 'ipv4' : 'ipv6');
 }
 
