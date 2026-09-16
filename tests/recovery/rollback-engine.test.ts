@@ -30,11 +30,14 @@ test('failed deployment rollback remains BLOCKED when no explicit rollback comma
     }));
     const tasks = new TaskEngine(db);
     const task = tasks.create('project-a', 'failed deploy');
+    const now = new Date().toISOString();
+    db.raw.prepare('INSERT INTO deployments(deployment_id,task_id,project_id,status,git_commit_before,git_commit_after,files_changed_json,commands_json,start_time,end_time,service,health_check_json,precheck_json,result_json,rollback_available,error_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run('deployment-1', task.taskId, 'project-a', 'FAILED', before, after, '[]', '[]', now, now, null, null, '{}', null, 1, JSON.stringify({ message: 'deploy failed' }));
     tasks.setDeployment(task.taskId, 'deployment-1');
     tasks.setGitReferences(task.taskId, before, after);
     const deployment: DeploymentRecord = {
       deploymentId: 'deployment-1', taskId: task.taskId, projectId: 'project-a', status: 'FAILED', gitCommitBefore: before, gitCommitAfter: after,
-      filesChanged: [], commands: [], startTime: new Date().toISOString(), endTime: new Date().toISOString(), service: null, healthCheck: null,
+      filesChanged: [], commands: [], startTime: now, endTime: now, service: null, healthCheck: null,
       precheck: {}, result: null, rollbackAvailable: true, error: { message: 'deploy failed' },
     };
     const deployments = { get: (id: string) => id === 'deployment-1' ? deployment : null } as unknown as DeploymentEngine;
