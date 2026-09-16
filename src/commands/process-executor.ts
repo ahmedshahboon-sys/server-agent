@@ -22,7 +22,7 @@ export interface ProcessExecutionResult {
   readonly durationMs: number;
 }
 
-function boundedAppend(current: Buffer, chunk: Buffer, limit: number): { buffer: Buffer; truncated: boolean } {
+function boundedAppend(current: Buffer<ArrayBufferLike>, chunk: Buffer<ArrayBufferLike>, limit: number): { buffer: Buffer<ArrayBufferLike>; truncated: boolean } {
   if (current.length >= limit) return { buffer: current, truncated: true };
   const remaining = limit - current.length;
   if (chunk.length <= remaining) return { buffer: Buffer.concat([current, chunk]), truncated: false };
@@ -36,8 +36,8 @@ export async function executeArgv(argv: readonly string[], options: ProcessExecu
 
   return new Promise<ProcessExecutionResult>((resolve, reject) => {
     const started = Date.now();
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
+    let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let stdoutTruncated = false;
     let stderrTruncated = false;
     let timedOut = false;
@@ -62,12 +62,12 @@ export async function executeArgv(argv: readonly string[], options: ProcessExecu
     const abort = (): void => { child.kill('SIGTERM'); };
     options.signal?.addEventListener('abort', abort, { once: true });
 
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout.on('data', (chunk: Buffer<ArrayBufferLike>) => {
       const next = boundedAppend(stdout, chunk, options.maxOutputBytes);
       stdout = next.buffer;
       stdoutTruncated ||= next.truncated;
     });
-    child.stderr.on('data', (chunk: Buffer) => {
+    child.stderr.on('data', (chunk: Buffer<ArrayBufferLike>) => {
       const next = boundedAppend(stderr, chunk, options.maxOutputBytes);
       stderr = next.buffer;
       stderrTruncated ||= next.truncated;
