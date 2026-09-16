@@ -64,7 +64,8 @@ export async function executeArgv(argv: readonly string[], options: ProcessExecu
     const timer = setTimeout(() => { timedOut = true; terminate(); }, options.timeoutMs);
     timer.unref();
     const abort = (): void => { terminate(); };
-    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted === true) terminate();
+    else options.signal?.addEventListener('abort', abort, { once: true });
 
     child.stdout.on('data', (chunk: Buffer<ArrayBufferLike>) => {
       const next = boundedAppend(stdout, chunk, options.maxOutputBytes);
