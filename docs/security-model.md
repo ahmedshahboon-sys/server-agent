@@ -1,33 +1,31 @@
 # Security model
 
-## Default deny
+## Default deny and project scope
 
-A project operation requires explicit caller permission and project scope. Phase 2 tools also require the registered project to enable that capability. Cross-project access is denied even if the caller holds the tool permission.
+An operation requires explicit caller permission/project scope and the registered project must enable the capability. Cross-project access remains denied.
 
-## Filesystem sandbox
+## Filesystem and commands
 
-User-supplied paths are rejected when absolute, traversal-based, encoded traversal/null sequences, or when canonical resolution escapes the project root. Existing paths use `realpath`; write targets verify the nearest existing ancestor and existing symlink targets.
+Canonical `realpath` sandboxing prevents traversal and symlink escape. Sensitive files are blocked from ordinary file tools. Project commands are fixed argv arrays executed with `shell: false`; dangerous shell/system-control executables are blocked from the generic command tool.
 
-String-prefix checks are not the security boundary.
+## Database safety
 
-## Sensitive files
+`database_query` classifies a single SQL statement before execution. Reads and controlled writes are separate permissions. Writes also require the project to opt into `controlled-write`. `DROP DATABASE`, `DROP TABLE`, `TRUNCATE`, destructive `ALTER ... DROP`, and `DELETE` without `WHERE` are blocked from the normal interface. Transaction-control SQL is not accepted through `database_query`; transactions use the dedicated transaction API.
 
-Ordinary file tools deny common environment, credential, token, private-key, and certificate file names. Search skips paths that policy does not allow instead of exposing their contents.
+Returned rows and bytes are bounded. SQLite operations run in short-lived worker threads with a hard timeout so a long query cannot block the main Agent. Database audit records store a SHA-256 statement hash, classification, outcome, and counts—not SQL text or credentials.
 
-## Command execution
+## Health and SSRF boundary
 
-`run_command` foundations do not accept arbitrary shell strings. A project registers fixed argv arrays, the caller selects a command id, and execution uses `shell: false`. Common system-control and shell executables are blocked even if accidentally configured. Commands have timeouts, bounded stdout/stderr, cancellation hooks, and bounded concurrency.
+HTTP/HTTPS health URLs are derived from the registered project domain and registered health path, not arbitrary caller URLs. Userinfo, path-bearing domains, localhost, metadata hostnames, and private/loopback IP literals are rejected, and redirects are disabled. This keeps health checks from becoming a generic URL-fetch primitive.
 
-Only selected baseline environment variables and explicitly referenced project environment variables are passed to project commands. Known runtime secret values are removed from captured output.
+## Deployment safety
 
-## Git
+A successful command is not enough for deployment success. Git/precheck/validation/migration checkpointing runs first, then deployment, then health. A failed required health check produces a failed deployment record with rollback reference preserved for Phase 4.
 
-Git operations are fixed service methods. There is no reset-hard, clean, forced checkout, or force push. Commit hooks are disabled for Agent-created commits so a repository-local hook cannot become an implicit command-execution path.
+## Services and logs
 
-## Secret handling
+Service operations use strict systemd unit names and fixed `systemctl` argv. Journal reads are line/output bounded and secret-redacted. They do not expose an arbitrary shell.
 
-Structured logs and persisted errors redact sensitive keys, bearer tokens, assignments, credential-bearing URLs, private-key blocks, and known runtime secret values. Registry records accept environment references rather than secret values.
+## Secrets and GitHub CI
 
-## GitHub CI
-
-GitHub-hosted runners are used only for source validation. Workflows have read-only repository permissions, contain no deployment steps, use no production credentials, and do not connect to production infrastructure.
+Structured output and persisted errors are redacted. Secrets are referenced by environment name rather than stored in Registry/Task/Deployment state. GitHub-hosted CI remains development-only with no production credentials, SSH, database access, or deployment step.
