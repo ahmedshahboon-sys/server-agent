@@ -44,6 +44,20 @@ export class RestrictedCommandRunner {
     private readonly options: RestrictedCommandOptions,
   ) {}
 
+
+  public async runRollback(projectId: string, principal: Principal, targetCommit: string): Promise<ProcessExecutionResult> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(targetCommit)) throw new ValidationError('Rollback target must be a full Git commit SHA');
+    this.authorizer.assertAllowed(principal, 'commands:run', projectId);
+    const project = this.projects.get(projectId);
+    if (project === null || !project.enabled) throw new ValidationError('Project is not available');
+    if (!project.permissions.includes('commands:run')) throw new AuthorizationError('Project does not permit command execution');
+    const configured = project.commands.rollback;
+    if (configured === undefined || configured.length === 0) throw new CommandDeniedError('Rollback command is not configured');
+    if (!configured.some((argument) => argument.includes('{target_commit}'))) throw new CommandDeniedError('Rollback command must explicitly reference {target_commit}');
+    const argv = configured.map((argument) => argument.replaceAll('{target_commit}', targetCommit));
+    return this.executeConfigured(project, argv);
+  }
+
   public async run(projectId: string, principal: Principal, commandId: string, hooks: CommandRunHooks = {}): Promise<ProcessExecutionResult> {
     this.authorizer.assertAllowed(principal, 'commands:run', projectId);
     const project = this.projects.get(projectId);
@@ -52,9 +66,12 @@ export class RestrictedCommandRunner {
     const argv = configuredArgv(project, commandId);
     if (argv === undefined || argv.length === 0) throw new CommandDeniedError(`Command ${commandId} is not configured`);
 
+    return this.executeConfigured(project, argv, hooks);
+  }
+
+  private async executeConfigured(project: ProjectRecord, argv: readonly string[], hooks: CommandRunHooks = {}): Promise<ProcessExecutionResult> {
     const executable = path.basename(argv[0] ?? '').toLowerCase();
     if (DENIED_EXECUTABLES.has(executable)) throw new CommandDeniedError(`Executable ${executable} is blocked`);
-
     const sandbox = await ProjectPathSandbox.create(project.root);
     const sourceEnv = this.options.environment ?? process.env;
     const env = baseEnvironment(sourceEnv);
@@ -66,7 +83,6 @@ export class RestrictedCommandRunner {
         secretValues.push(value);
       }
     }
-
     return executeArgv(argv, {
       cwd: sandbox.root,
       env,

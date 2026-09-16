@@ -178,6 +178,67 @@ const BASE_MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_database_audit_project_time ON database_audit(project_id, created_at);
     `,
   },
+
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS recovery_runs (
+        recovery_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        deployment_id TEXT,
+        attempt INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        decision_json TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        error_json TEXT,
+        UNIQUE(task_id, attempt),
+        FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+        FOREIGN KEY(project_id) REFERENCES projects(id),
+        FOREIGN KEY(deployment_id) REFERENCES deployments(deployment_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_recovery_runs_task ON recovery_runs(task_id, attempt);
+
+      CREATE TABLE IF NOT EXISTS rollback_plans (
+        rollback_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        deployment_id TEXT NOT NULL,
+        target_commit TEXT,
+        observed_commit TEXT,
+        status TEXT NOT NULL,
+        code_action TEXT NOT NULL,
+        database_safety TEXT NOT NULL,
+        migration_evidence_json TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        result_json TEXT,
+        error_json TEXT,
+        FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+        FOREIGN KEY(project_id) REFERENCES projects(id),
+        FOREIGN KEY(deployment_id) REFERENCES deployments(deployment_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_rollback_plans_task ON rollback_plans(task_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS mcp_audit (
+        audit_id TEXT PRIMARY KEY,
+        request_id TEXT,
+        principal_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        project_id TEXT,
+        success INTEGER NOT NULL CHECK (success IN (0,1)),
+        error_code TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_mcp_audit_time ON mcp_audit(created_at);
+      CREATE INDEX IF NOT EXISTS idx_mcp_audit_principal ON mcp_audit(principal_id, created_at);
+    `,
+  },
 ] as const;
 
 export class SqliteDatabase {

@@ -1,0 +1,88 @@
+import { randomUUID } from 'node:crypto';
+import type { Authorizer } from '../core/interfaces.js';
+import type { Principal, ProjectPermission } from '../core/types.js';
+import { AuthorizationError, ValidationError } from '../core/errors.js';
+import type { SqliteDatabase } from '../database/sqlite.js';
+import { redactError, redactValue } from '../security/redaction.js';
+
+export type JsonSchema = Readonly<Record<string, unknown>>;
+
+export interface McpToolDefinition {
+  readonly name: string;
+  readonly title?: string;
+  readonly description: string;
+  readonly inputSchema: JsonSchema;
+  readonly outputSchema?: JsonSchema;
+}
+
+export interface ToolCallContext {
+  readonly principal: Principal;
+  readonly requestId: string | number | null;
+}
+
+export interface ToolRegistration {
+  readonly definition: McpToolDefinition;
+  readonly permission: ProjectPermission;
+  readonly projectArgument?: string;
+  readonly requiresGlobalScope?: boolean;
+  readonly handler: (argumentsValue: Readonly<Record<string, unknown>>, context: ToolCallContext) => Promise<unknown>;
+}
+
+function requestIdText(value: string | number | null): string | null { return value === null ? null : String(value).slice(0, 128); }
+
+export class McpToolRegistry {
+  private readonly registrations = new Map<string, ToolRegistration>();
+
+  public constructor(private readonly authorizer: Authorizer, private readonly db?: SqliteDatabase) {}
+
+  public register(registration: ToolRegistration): void {
+    if (!/^[a-z][a-z0-9_]{1,63}$/.test(registration.definition.name)) throw new ValidationError('MCP tool name is invalid');
+    if (this.registrations.has(registration.definition.name)) throw new ValidationError(`Duplicate MCP tool ${registration.definition.name}`);
+    this.registrations.set(registration.definition.name, registration);
+  }
+
+  public has(name: string): boolean { return this.registrations.has(name); }
+
+  public list(principal: Principal): readonly McpToolDefinition[] {
+    return [...this.registrations.values()]
+      .filter((item) => principal.permissions.includes(item.permission))
+      .filter((item) => item.requiresGlobalScope !== true || principal.projectScopes.includes('*'))
+      .map((item) => item.definition)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  public async call(name: string, argumentsValue: unknown, context: ToolCallContext): Promise<unknown> {
+    const registration = this.registrations.get(name);
+    if (registration === undefined) throw new ValidationError('Unknown MCP tool');
+    const args = this.argumentsRecord(argumentsValue);
+    let projectId: string | undefined;
+    if (registration.projectArgument !== undefined) {
+      const candidate = args[registration.projectArgument];
+      if (typeof candidate !== 'string' || candidate.trim() === '') throw new ValidationError(`${registration.projectArgument} is required`);
+      projectId = candidate;
+    }
+    try {
+      if (registration.requiresGlobalScope === true && !context.principal.projectScopes.includes('*')) throw new AuthorizationError();
+      this.authorizer.assertAllowed(context.principal, registration.permission, projectId);
+      const result = await registration.handler(args, context);
+      this.audit(context, name, projectId, true, null);
+      return redactValue(result);
+    } catch (error) {
+      const safe = redactError(error);
+      this.audit(context, name, projectId, false, typeof safe['code'] === 'string' ? safe['code'] : 'TOOL_ERROR');
+      throw error;
+    }
+  }
+
+  private argumentsRecord(value: unknown): Readonly<Record<string, unknown>> {
+    if (value === undefined) return {};
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Tool arguments must be an object');
+    return value as Readonly<Record<string, unknown>>;
+  }
+
+  private audit(context: ToolCallContext, toolName: string, projectId: string | undefined, success: boolean, errorCode: string | null): void {
+    if (this.db === undefined) return;
+    this.db.raw.prepare('INSERT INTO mcp_audit(audit_id,request_id,principal_id,tool_name,project_id,success,error_code,created_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run(randomUUID(), requestIdText(context.requestId), context.principal.id.slice(0, 128), toolName, projectId ?? null, success ? 1 : 0, errorCode, new Date().toISOString());
+  }
+}

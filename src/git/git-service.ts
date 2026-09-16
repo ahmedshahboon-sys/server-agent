@@ -46,6 +46,12 @@ export class GitService {
     return this.read(projectId, principal, ['git', 'diff', '--stat', '--']);
   }
 
+  public async commitExists(projectId: string, principal: Principal, commit: string): Promise<boolean> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(commit)) throw new ValidationError('Git commit reference must be a full SHA');
+    const result = await this.read(projectId, principal, ['git', 'cat-file', '-e', `${commit}^{commit}`]);
+    return result.exitCode === 0;
+  }
+
   public diffBetween(projectId: string, principal: Principal, baseCommit: string, headCommit: string): Promise<ProcessExecutionResult> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(baseCommit) || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(headCommit)) throw new ValidationError('Git commit references must be full SHAs');
     return this.read(projectId, principal, ['git', 'diff', '--name-only', `${baseCommit}..${headCommit}`, '--']);

@@ -90,6 +90,12 @@ export class ProjectRegistry implements ProjectStore {
     return this.update(projectId, { enabled: false });
   }
 
+  public remove(projectId: string): void {
+    this.getRequired(projectId);
+    const result = this.db.raw.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+    if (Number(result.changes) !== 1) throw new ValidationError(`Project ${projectId} could not be removed`);
+  }
+
   private getRequired(projectId: string): ProjectRecord {
     const project = this.get(projectId);
     if (project === null) throw new ValidationError(`Project ${projectId} not found`);

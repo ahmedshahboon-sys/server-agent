@@ -8,18 +8,26 @@ export type ProjectPermission =
   | 'git:read'
   | 'git:write'
   | 'commands:run'
+  | 'tasks:read'
+  | 'tasks:write'
   | 'database:read'
   | 'database:write'
+  | 'deploy:read'
   | 'deploy:run'
   | 'health:read'
   | 'logs:read'
   | 'service:read'
-  | 'service:restart';
+  | 'service:restart'
+  | 'recovery:read'
+  | 'recovery:run'
+  | 'rollback:read'
+  | 'rollback:run';
 
 export interface CommandConfig {
   readonly build?: readonly string[];
   readonly test?: readonly string[];
   readonly deploy?: readonly string[];
+  readonly rollback?: readonly string[];
   readonly allowed?: Readonly<Record<string, readonly string[]>>;
   readonly validation?: readonly string[];
 }
@@ -89,6 +97,7 @@ export type TaskStatus =
   | 'ROLLBACK_REQUIRED'
   | 'ROLLING_BACK'
   | 'COMPLETED'
+  | 'ROLLED_BACK'
   | 'CANCELLED';
 
 export type JobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'UNKNOWN';
@@ -96,3 +105,6 @@ export type JobStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCEL
 export type DatabaseQueryClassification = 'READ' | 'WRITE' | 'DESTRUCTIVE' | 'TRANSACTION_CONTROL' | 'UNKNOWN';
 export type HealthState = 'HEALTHY' | 'DEGRADED' | 'UNHEALTHY' | 'UNKNOWN';
 export type DeploymentStatus = 'PREPARING' | 'DEPLOYING' | 'HEALTH_CHECKING' | 'SUCCEEDED' | 'FAILED';
+export type RecoveryStatus = 'ASSESSING' | 'RESUME_RECOMMENDED' | 'ROLLBACK_REQUIRED' | 'MANUAL_REQUIRED' | 'FAILED';
+export type RollbackStatus = 'PLANNED' | 'BLOCKED' | 'READY' | 'ROLLING_BACK' | 'HEALTH_CHECKING' | 'SUCCEEDED' | 'FAILED';
+export type MigrationRollbackSafety = 'SAFE' | 'MANUAL_REQUIRED' | 'BLOCKED';
