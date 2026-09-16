@@ -16,19 +16,29 @@ export class ValidationError extends ServerAgentError {
 }
 
 export class AuthorizationError extends ServerAgentError {
-  public constructor(message = 'Access denied') {
-    super(message, 'AUTHORIZATION_DENIED');
-  }
+  public constructor(message = 'Access denied') { super(message, 'AUTHORIZATION_DENIED'); }
 }
 
 export class SandboxViolationError extends ServerAgentError {
-  public constructor(message: string) {
-    super(message, 'SANDBOX_VIOLATION');
-  }
+  public constructor(message: string) { super(message, 'SANDBOX_VIOLATION'); }
 }
 
 export class SensitiveFileError extends ServerAgentError {
-  public constructor(message = 'Sensitive file access is denied') {
-    super(message, 'SENSITIVE_FILE_DENIED');
-  }
+  public constructor(message = 'Sensitive file access is denied') { super(message, 'SENSITIVE_FILE_DENIED'); }
+}
+
+export class CommandDeniedError extends ServerAgentError {
+  public constructor(message = 'Command is not allowed') { super(message, 'COMMAND_DENIED'); }
+}
+
+export class CommandTimeoutError extends ServerAgentError {
+  public constructor(message = 'Command timed out') { super(message, 'COMMAND_TIMEOUT'); }
+}
+
+export class AttemptLimitError extends ServerAgentError {
+  public constructor(message = 'Attempt limit reached') { super(message, 'ATTEMPT_LIMIT_REACHED'); }
+}
+
+export class ConflictError extends ServerAgentError {
+  public constructor(message: string) { super(message, 'CONFLICT'); }
 }

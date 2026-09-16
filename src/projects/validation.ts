@@ -29,6 +29,15 @@ export function validateProjectInput(project: Omit<ProjectRecord, 'createdAt' | 
   for (const reference of project.environmentRefs) {
     if (!/^[A-Z][A-Z0-9_]{1,127}$/.test(reference)) throw new ValidationError('Environment references must be variable names, not values');
   }
+  if (project.commands.validation !== undefined) {
+    const known = new Set<string>(Object.keys(project.commands.allowed ?? {}));
+    if (project.commands.build !== undefined) known.add('build');
+    if (project.commands.test !== undefined) known.add('test');
+    if (project.commands.deploy !== undefined) known.add('deploy');
+    for (const step of project.commands.validation) {
+      if (!known.has(step)) throw new ValidationError(`Validation step ${step} is not a configured command`);
+    }
+  }
   assertNoEmbeddedSecrets(project.metadata);
   assertNoEmbeddedSecrets(project.database.metadata);
 }

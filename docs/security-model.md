@@ -2,22 +2,32 @@
 
 ## Default deny
 
-Authorization requires both an explicit tool permission and explicit project scope. Cross-project access is denied even if the caller holds the tool permission.
+A project operation requires explicit caller permission and project scope. Phase 2 tools also require the registered project to enable that capability. Cross-project access is denied even if the caller holds the tool permission.
 
 ## Filesystem sandbox
 
-User-supplied paths are rejected when they are absolute, contain `..` path segments, encoded traversal/null sequences, or resolve outside a project's canonical root. Existing paths are verified with `realpath`; write targets verify their nearest existing ancestor and existing symlink targets.
+User-supplied paths are rejected when absolute, traversal-based, encoded traversal/null sequences, or when canonical resolution escapes the project root. Existing paths use `realpath`; write targets verify the nearest existing ancestor and existing symlink targets.
 
-String-prefix checks are intentionally not used as the security boundary.
+String-prefix checks are not the security boundary.
 
 ## Sensitive files
 
-Default reads and writes are denied for common environment, credentials, token, private-key, and certificate file names. Future privileged capabilities may add explicit policy-controlled exceptions; ordinary tools must not bypass this policy.
+Ordinary file tools deny common environment, credential, token, private-key, and certificate file names. Search skips paths that policy does not allow instead of exposing their contents.
+
+## Command execution
+
+`run_command` foundations do not accept arbitrary shell strings. A project registers fixed argv arrays, the caller selects a command id, and execution uses `shell: false`. Common system-control and shell executables are blocked even if accidentally configured. Commands have timeouts, bounded stdout/stderr, cancellation hooks, and bounded concurrency.
+
+Only selected baseline environment variables and explicitly referenced project environment variables are passed to project commands. Known runtime secret values are removed from captured output.
+
+## Git
+
+Git operations are fixed service methods. There is no reset-hard, clean, forced checkout, or force push. Commit hooks are disabled for Agent-created commits so a repository-local hook cannot become an implicit command-execution path.
 
 ## Secret handling
 
-Structured logs redact sensitive keys, bearer tokens, secret assignments, credential-bearing URLs, and private-key blocks before output. Project registry records accept references to environment variables rather than secret values, and reject secret-like metadata keys.
+Structured logs and persisted errors redact sensitive keys, bearer tokens, assignments, credential-bearing URLs, private-key blocks, and known runtime secret values. Registry records accept environment references rather than secret values.
 
 ## GitHub CI
 
-GitHub-hosted runners are used only for source validation. Workflows have read-only repository permissions, contain no deployment steps, do not use production credentials, and do not connect to production infrastructure.
+GitHub-hosted runners are used only for source validation. Workflows have read-only repository permissions, contain no deployment steps, use no production credentials, and do not connect to production infrastructure.
