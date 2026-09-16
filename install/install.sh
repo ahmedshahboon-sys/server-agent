@@ -96,7 +96,7 @@ install -m 0644 -o root -g root "${TMP_UNIT}" "${UNIT_FILE}"
 systemctl daemon-reload
 
 if (( ENABLE_SERVICE == 1 )); then
-  if grep -Eq '^SERVER_AGENT_MCP_BEARER_TOKEN=CHANGE_ME' "${ENV_FILE}"; then
+  if grep -Eq '^SERVER_AGENT_MCP_BEARER_TOKEN=CHANGE_ME_WITH_32_PLUS_RANDOM_CHARACTERS$' "${ENV_FILE}"; then
     echo "Refusing to enable Server Agent while the example bearer-token placeholder remains in ${ENV_FILE}." >&2
     exit 1
   fi
