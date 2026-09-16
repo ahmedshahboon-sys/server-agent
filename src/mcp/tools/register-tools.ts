@@ -8,13 +8,13 @@ import type { DeploymentEngine } from '../../deployment/deployment-engine.js';
 import type { ProjectFileService } from '../../files/file-service.js';
 import type { GitService } from '../../git/git-service.js';
 import type { HealthCheckService } from '../../health/health-service.js';
+import type { JobManager } from '../../jobs/job-manager.js';
 import type { JournalLogReader } from '../../logs/journal-logs.js';
 import type { RecoveryEngine } from '../../recovery/recovery-engine.js';
 import type { RollbackEngine } from '../../recovery/rollback-engine.js';
 import type { ProjectServiceManager } from '../../services/service-controller.js';
 import type { TaskEngine } from '../../tasks/task-engine.js';
 import type { LocalValidationPipeline } from '../../validation/local-ci.js';
-import type { RestrictedCommandRunner } from '../../commands/command-runner.js';
 import { numberArg, objectArg, stringArg, stringArrayArg } from '../arguments.js';
 import type { McpToolRegistry } from '../tool-registry.js';
 import { registerFileTools } from './file-tools.js';
@@ -26,7 +26,7 @@ export interface ServerAgentMcpServices {
   readonly projects: ProjectStore;
   readonly files: ProjectFileService;
   readonly git: GitService;
-  readonly runner: RestrictedCommandRunner;
+  readonly jobs: JobManager;
   readonly validation: LocalValidationPipeline;
   readonly database: DatabaseService;
   readonly tasks: TaskEngine;
@@ -48,6 +48,12 @@ function taskForProject(services: ServerAgentMcpServices, projectId: string, tas
   const task = services.tasks.get(taskId);
   if (task === null || task.projectId !== projectId) throw new ValidationError('Task is not available for this project');
   return task;
+}
+
+function jobForProject(services: ServerAgentMcpServices, projectId: string, jobId: string) {
+  const job = services.jobs.get(jobId);
+  if (job === null || job.projectId !== projectId) throw new ValidationError('Job is not available for this project');
+  return job;
 }
 
 function deploymentForProject(services: ServerAgentMcpServices, projectId: string, deploymentId: string) {
@@ -120,6 +126,24 @@ function registerTaskTools(registry: McpToolRegistry, services: ServerAgentMcpSe
   }
 }
 
+function registerJobTools(registry: McpToolRegistry, services: ServerAgentMcpServices): void {
+  registry.register({
+    definition: { name: 'job_status', description: 'Read one persistent command job after disconnect or process restart.', inputSchema: objectSchema({ project_id: projectIdSchema, job_id: stringSchema }, ['project_id', 'job_id']) },
+    permission: 'commands:run', projectArgument: 'project_id',
+    handler: async (args) => { const projectId = stringArg(args, 'project_id') ?? ''; requireProjectCapability(services, projectId, 'commands:run'); return jobForProject(services, projectId, stringArg(args, 'job_id', { max: 128 }) ?? ''); },
+  });
+  registry.register({
+    definition: { name: 'list_jobs', description: 'List recent persistent command jobs for one project.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) },
+    permission: 'commands:run', projectArgument: 'project_id',
+    handler: async (args) => { const projectId = stringArg(args, 'project_id') ?? ''; requireProjectCapability(services, projectId, 'commands:run'); return services.jobs.list(projectId).slice(0, 100); },
+  });
+  registry.register({
+    definition: { name: 'cancel_job', description: 'Cancel a running job only when it is attached to this Agent process.', inputSchema: objectSchema({ project_id: projectIdSchema, job_id: stringSchema }, ['project_id', 'job_id']) },
+    permission: 'commands:run', projectArgument: 'project_id',
+    handler: async (args) => { const projectId = stringArg(args, 'project_id') ?? ''; requireProjectCapability(services, projectId, 'commands:run'); const jobId = stringArg(args, 'job_id', { max: 128 }) ?? ''; jobForProject(services, projectId, jobId); return services.jobs.cancel(jobId); },
+  });
+}
+
 function registerDatabaseTools(registry: McpToolRegistry, services: ServerAgentMcpServices): void {
   registry.register({ definition: { name: 'database_status', description: 'Check configured project database connectivity.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) }, permission: 'database:read', projectArgument: 'project_id', handler: async (args, ctx) => services.database.status(stringArg(args, 'project_id') ?? '', ctx.principal) });
   registry.register({ definition: { name: 'database_schema', description: 'Read bounded project database schema metadata.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) }, permission: 'database:read', projectArgument: 'project_id', handler: async (args, ctx) => services.database.schema(stringArg(args, 'project_id') ?? '', ctx.principal) });
@@ -170,7 +194,7 @@ function registerDiagnosticsTools(registry: McpToolRegistry, services: ServerAge
       requireProjectCapability(services, projectId, 'project:read');
       const project = services.projects.get(projectId);
       if (project === null) throw new ValidationError('Project is not available');
-      return { project: { id: project.id, name: project.name, enabled: project.enabled, runtime: project.runtime, serviceName: project.serviceName ?? null }, tasks: services.tasks.list(projectId).slice(0, 20), deployments: services.deployments.list(projectId).slice(0, 20) };
+      return { project: { id: project.id, name: project.name, enabled: project.enabled, runtime: project.runtime, serviceName: project.serviceName ?? null }, tasks: services.tasks.list(projectId).slice(0, 20), jobs: services.jobs.list(projectId).slice(0, 20), deployments: services.deployments.list(projectId).slice(0, 20) };
     },
   });
 }
@@ -178,8 +202,9 @@ function registerDiagnosticsTools(registry: McpToolRegistry, services: ServerAge
 export function registerServerAgentTools(registry: McpToolRegistry, services: ServerAgentMcpServices): void {
   registerProjectTools(registry, services.projects);
   registerFileTools(registry, services.files);
-  registerGitCommandTools(registry, services.git, services.runner, services.validation);
+  registerGitCommandTools(registry, services.git, services.jobs, services.validation);
   registerTaskTools(registry, services);
+  registerJobTools(registry, services);
   registerDatabaseTools(registry, services);
   registerOperationalTools(registry, services);
   registerRecoveryTools(registry, services);

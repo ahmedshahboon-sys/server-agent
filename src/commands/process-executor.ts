@@ -42,6 +42,7 @@ export async function executeArgv(argv: readonly string[], options: ProcessExecu
     let stderrTruncated = false;
     let timedOut = false;
     let settled = false;
+    let killTimer: NodeJS.Timeout | undefined;
 
     const child = spawn(executable, args, {
       cwd: options.cwd,
@@ -52,15 +53,19 @@ export async function executeArgv(argv: readonly string[], options: ProcessExecu
     });
     options.onSpawn?.(child.pid);
 
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const terminate = (): void => {
+      if (settled) return;
       child.kill('SIGTERM');
-      setTimeout(() => { if (!settled) child.kill('SIGKILL'); }, 1000).unref();
-    }, options.timeoutMs);
+      if (killTimer === undefined) {
+        killTimer = setTimeout(() => { if (!settled) child.kill('SIGKILL'); }, 1000);
+        killTimer.unref();
+      }
+    };
+    const timer = setTimeout(() => { timedOut = true; terminate(); }, options.timeoutMs);
     timer.unref();
-
-    const abort = (): void => { child.kill('SIGTERM'); };
-    options.signal?.addEventListener('abort', abort, { once: true });
+    const abort = (): void => { terminate(); };
+    if (options.signal?.aborted === true) terminate();
+    else options.signal?.addEventListener('abort', abort, { once: true });
 
     child.stdout.on('data', (chunk: Buffer<ArrayBufferLike>) => {
       const next = boundedAppend(stdout, chunk, options.maxOutputBytes);
@@ -76,6 +81,7 @@ export async function executeArgv(argv: readonly string[], options: ProcessExecu
     child.once('error', (error) => {
       settled = true;
       clearTimeout(timer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
       options.signal?.removeEventListener('abort', abort);
       reject(error);
     });
@@ -83,6 +89,7 @@ export async function executeArgv(argv: readonly string[], options: ProcessExecu
     child.once('close', (exitCode, signal) => {
       settled = true;
       clearTimeout(timer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
       options.signal?.removeEventListener('abort', abort);
       if (timedOut) {
         reject(new CommandTimeoutError(`Command timed out after ${options.timeoutMs}ms`));

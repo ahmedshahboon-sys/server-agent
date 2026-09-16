@@ -8,6 +8,7 @@ import { safeRemoteError, safeRemoteValue } from './remote-response.js';
 export const MCP_PROTOCOL_VERSION = '2026-07-28';
 const SERVER_INFO_KEY = 'io.modelcontextprotocol/serverInfo';
 const PROTOCOL_VERSION_KEY = 'io.modelcontextprotocol/protocolVersion';
+const CLIENT_CAPABILITIES_KEY = 'io.modelcontextprotocol/clientCapabilities';
 
 export interface McpHttpRequest {
   readonly method: string;
@@ -77,7 +78,7 @@ export class McpHttpTransport {
     private readonly tools: McpToolRegistry,
     private readonly options: McpTransportOptions,
   ) {
-    this.serverInfo = { name: options.serverName ?? 'server-agent', version: options.serverVersion ?? '0.4.0' };
+    this.serverInfo = { name: options.serverName ?? 'server-agent', version: options.serverVersion ?? '0.5.0' };
   }
 
   public async handle(request: McpHttpRequest): Promise<McpHttpResponse> {
@@ -114,8 +115,12 @@ export class McpHttpTransport {
     if (protocolHeader !== MCP_PROTOCOL_VERSION) return this.protocolError(rpc.id, 400, -32022, 'Unsupported MCP protocol version', { supported: [MCP_PROTOCOL_VERSION] });
     const methodHeader = header(request.headers, 'mcp-method');
     if (methodHeader !== rpc.method) return this.protocolError(rpc.id, 400, -32020, 'Mcp-Method header does not match request body');
-    const meta = record(rpc.params['_meta'], 'params._meta');
+    let meta: JsonObject;
+    try { meta = record(rpc.params['_meta'], 'params._meta'); } catch (error) { const safe = safeRemoteError(error); return this.protocolError(rpc.id, 400, -32602, safe.message, safe.data); }
     if (meta[PROTOCOL_VERSION_KEY] !== MCP_PROTOCOL_VERSION) return this.protocolError(rpc.id, 400, -32020, 'Request protocol metadata does not match MCP-Protocol-Version');
+    if (meta[CLIENT_CAPABILITIES_KEY] === undefined) return this.protocolError(rpc.id, 400, -32020, 'Client capabilities metadata is required');
+    try { record(meta[CLIENT_CAPABILITIES_KEY], `params._meta.${CLIENT_CAPABILITIES_KEY}`); }
+    catch { return this.protocolError(rpc.id, 400, -32020, 'Client capabilities metadata is required'); }
 
     if (rpc.method === 'server/discover') return json(200, this.success(rpc.id, {
       resultType: 'complete',

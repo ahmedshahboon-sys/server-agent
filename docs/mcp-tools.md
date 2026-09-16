@@ -1,41 +1,120 @@
-# Remote MCP boundary
+# Remote MCP boundary and tools
 
-Phase 4 exposes the transport-independent Server Agent services through an authenticated, project-scoped MCP HTTP boundary. The transport is intentionally separate from files, Git, database, tasks, deployment, recovery, and rollback logic.
+Server Agent implements a stateless HTTP MCP boundary for protocol `2026-07-28`. Core services remain transport-independent; the MCP layer performs authentication, permission/scope checks, schema validation, redaction, and bounded response handling before/after calling them.
 
-## Transport and authentication
+## Request envelope
 
-The Phase 4 transport targets MCP protocol `2026-07-28` over stateless HTTP. It accepts only the configured MCP path and `POST` requests with JSON bodies, enforces a body-size limit, validates `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`, and does not create server sessions.
+Modern requests must carry matching transport and `_meta` protocol information:
 
-An `McpAuthenticator` abstraction sits in front of all MCP methods. `RejectAllAuthenticator` is the safe default building block and `StaticBearerAuthenticator` exists for controlled development/integration. Production identity is deliberately not hard-wired into the core. Cloudflare Tunnel / Access integration remains an installation-stage concern.
+- `MCP-Protocol-Version: 2026-07-28`
+- `Mcp-Method: <json-rpc method>`
+- `Mcp-Name: <tool name>` for `tools/call`
+- JSON-RPC `params._meta.io.modelcontextprotocol/protocolVersion`
+- JSON-RPC `params._meta.io.modelcontextprotocol/clientCapabilities` as an object
 
-When an `Origin` header is present it must match the configured allowlist. Unknown origins are rejected. The transport is not an arbitrary URL fetcher and does not expose an unrestricted shell.
+The Server Agent endpoint also requires `Authorization: Bearer <agent credential>`. Requests with an `Origin` header are accepted only when that exact origin is configured in `SERVER_AGENT_MCP_ALLOWED_ORIGINS`.
 
-## Authorization
+Supported protocol methods are `server/discover`, `tools/list`, and `tools/call`. Session ids are rejected because this implementation is intentionally stateless.
 
-Authentication only establishes a `Principal`; it does not grant project access by itself. Each tool then passes:
+## Authentication and authorization
 
-1. tool permission check,
-2. project-scope check,
-3. registered project-capability check in the underlying service or tool boundary,
-4. the existing filesystem / command / database / deployment safety layer.
+Bearer authentication identifies a remote principal. It does not bypass authorization. Every project operation remains constrained by:
 
-`tools/list` is filtered to permissions visible to the principal. Global operations such as project registration and `system_snapshot` additionally require global project scope (`*`). MCP audit records contain request/principal/tool/project outcome metadata only, never tool arguments.
+1. tool permission;
+2. principal project scope;
+3. registered project capability;
+4. operation-specific safety controls.
 
-## Exposed tool groups
+`tools/list` is permission-filtered. Cross-project access is denied. Tool arguments are not stored in MCP audit rows.
 
-- Projects: `list_projects`, `get_project`, `register_project`, `update_project`, `disable_project`, `remove_project`. `remove_project` removes only the Server Agent registry row and never deletes project files.
-- Files: `list_files`, `read_file`, `search_files`, `write_file`, `edit_file`, `delete_file`.
-- Git / commands: `git_status`, `git_diff`, `git_log`, `git_branch`, `git_commit`, `run_command`, `run_tests`, `run_validation`.
-- Tasks: `create_task`, `task_status`, `list_tasks`, `resume_task`, `pause_task`, `cancel_task`.
-- Database: `database_status`, `database_schema`, `database_migration_status`, `database_query`, `database_transaction`.
-- Operations: `get_logs`, `service_status`, `service_restart`, `health_check`, `deploy`, `deployment_status`.
-- Recovery / rollback: `recovery_assess`, `recovery_status`, `rollback_plan`, `rollback_status`, `rollback_execute`.
-- Diagnostics: `system_snapshot`, `project_diagnostics`.
+## Tool surface
 
-Rollback cannot be executed through generic `run_command`; it requires a persisted `READY` plan and revalidation immediately before execution.
+### Projects
 
-## Remote responses
+- `list_projects`
+- `get_project`
+- `register_project`
+- `update_project`
+- `disable_project`
+- `remove_project` — removes registry metadata only; never deletes project files
 
-Successful values and errors pass through recursive secret redaction before leaving the MCP boundary. Bearer credentials, secret-shaped keys, private keys, credential-bearing URLs, and configured secret values are not intentionally returned. Sensitive project files remain blocked by the filesystem policy regardless of MCP authorization.
+### Files
 
-Phase 4 does not publish DNS, open a public port, install Cloudflare, or access Production. Remote exposure and identity-provider setup are deferred to the installation work after all five source-build phases pass CI.
+- `list_files`
+- `read_file`
+- `search_files`
+- `write_file`
+- `edit_file`
+- `delete_file`
+
+### Git
+
+- `git_status`
+- `git_diff`
+- `git_log`
+- `git_branch`
+- `git_commit`
+
+No reset-hard, clean, force checkout, force push, or generic Git argv tool is exposed.
+
+### Commands, Jobs, validation
+
+- `run_command` — starts a registered command as a persistent Job
+- `run_tests` — starts the registered test command as a persistent Job
+- `job_status`
+- `list_jobs`
+- `cancel_job`
+- `run_validation`
+
+Arbitrary shell strings/argv are not accepted. The Job tools let the client reconnect and inspect work without blindly rerunning it.
+
+### Tasks
+
+- `create_task`
+- `task_status`
+- `list_tasks`
+- `resume_task`
+- `pause_task`
+- `cancel_task`
+
+### Database
+
+- `database_status`
+- `database_schema`
+- `database_query`
+- `database_transaction`
+- `database_migration_status`
+
+Destructive SQL is blocked from the normal interface. Write classification still requires explicit write authorization inside the database service even though the generic query tool is visible to read-authorized callers.
+
+### Deployment / health / services / logs
+
+- `deploy`
+- `deployment_status`
+- `health_check`
+- `get_logs`
+- `service_status`
+- `service_restart`
+
+Host-level service restart may remain unavailable until a deliberately narrow Linux authorization policy exists; the installer does not grant it automatically.
+
+### Recovery / rollback
+
+- `recovery_assess`
+- `recovery_status`
+- `rollback_plan`
+- `rollback_status`
+- `rollback_execute`
+
+Recovery is evidence-driven and bounded. Rollback execution requires a previously READY plan and immediate revalidation.
+
+### Diagnostics
+
+- `system_snapshot`
+- `project_diagnostics`
+
+Diagnostics are bounded and secret-redacted; `system_snapshot` requires global project scope.
+
+## Remote exposure
+
+The recommended installation keeps Server Agent on loopback and places an authenticated Cloudflare Tunnel/Access layer in front of it. Cloudflare transport never replaces Server Agent bearer authentication or per-project authorization. See `docs/cloudflare-remote-mcp.md`.

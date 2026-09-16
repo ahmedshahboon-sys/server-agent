@@ -1,0 +1,40 @@
+[Unit]
+Description=Server Agent MCP Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@@USER@@
+Group=@@GROUP@@
+WorkingDirectory=@@INSTALL_DIR@@
+EnvironmentFile=@@ENV_FILE@@
+ExecStart=@@NODE_BIN@@ @@INSTALL_DIR@@/dist/runtime/server-agent.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=180s
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+MemoryAccounting=true
+MemoryHigh=1G
+MemoryMax=2G
+TasksMax=256
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
