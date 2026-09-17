@@ -7,19 +7,23 @@ import { SqliteDatabase } from '../../src/database/sqlite.js';
 import { ProjectRegistry } from '../../src/projects/registry.js';
 import { DefaultDenyAuthorizer } from '../../src/security/authorization.js';
 import { DatabaseService, ProjectDatabaseAdapterFactory } from '../../src/database/database-service.js';
-import { AuthorizationError, DestructiveOperationError } from '../../src/core/errors.js';
+import { IdempotencyStore } from '../../src/idempotency/idempotency.js';
+import { withIdempotencyKey } from '../../src/idempotency/context.js';
+import { OperationLeaseStore } from '../../src/operations/operation-lease.js';
+import { AuthorizationError, ConflictError, DestructiveOperationError } from '../../src/core/errors.js';
 import { projectFixture, tempDir } from '../helpers.js';
 
 const readPrincipal={id:'reader',kind:'local' as const,projectScopes:['project-a'],permissions:['database:read'] as const};
 const writePrincipal={id:'writer',kind:'local' as const,projectScopes:['project-a'],permissions:['database:read','database:write'] as const};
 
-async function setup(defaultAccess:'read'|'controlled-write'='controlled-write') {
+async function setup(defaultAccess:'read'|'controlled-write'='controlled-write',safeMutations=false) {
   const temp=await tempDir('server-agent-db-'); await mkdir(path.join(temp.path,'data'));
   const appPath=path.join(temp.path,'data','app.sqlite'); const app=new DatabaseSync(appPath);
   app.exec('CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT NOT NULL); INSERT INTO items(name) VALUES (\'one\'),(\'two\'); CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY); INSERT INTO schema_migrations(version) VALUES (7);'); app.close();
   const state=new SqliteDatabase(':memory:'); const registry=new ProjectRegistry(state);
   registry.create(projectFixture({root:temp.path,database:{adapter:'sqlite',defaultAccess,metadata:{path:'data/app.sqlite'}},permissions:['database:read','database:write'],health:{type:'none'},deployment:{strategy:'none',requireClean:true,validationRequired:false,restartService:false,healthRequired:false}}));
-  const service=new DatabaseService(state,registry,new DefaultDenyAuthorizer(),new ProjectDatabaseAdapterFactory(),{timeoutMs:1000,maxRows:1,maxResultBytes:4096});
+  const mutationSafety=safeMutations?{idempotency:new IdempotencyStore(state),leases:new OperationLeaseStore(state),ownerId:'test-runtime',leaseTtlMs:5000}:{};
+  const service=new DatabaseService(state,registry,new DefaultDenyAuthorizer(),new ProjectDatabaseAdapterFactory(),{timeoutMs:1000,maxRows:1,maxResultBytes:4096},mutationSafety);
   return {temp,state,service,appPath};
 }
 
@@ -52,6 +56,18 @@ test('database service gates writes and blocks destructive statements', async()=
     const write=await service.query('project-a',writePrincipal,"INSERT INTO items(name) VALUES ('three')"); assert.equal(write.changedRows,1);
     await assert.rejects(service.query('project-a',writePrincipal,'DELETE FROM items'),DestructiveOperationError);
     await assert.rejects(service.query('project-a',writePrincipal,'DROP TABLE items'),DestructiveOperationError);
+  } finally {state.close();await temp.cleanup();}
+});
+
+test('database writes use request idempotency and do not execute twice', async()=>{
+  const {temp,state,service}=await setup('controlled-write',true);
+  try{
+    const sql="INSERT INTO items(name) VALUES ('three')";
+    const first=await withIdempotencyKey('db-request-1',()=>service.query('project-a',writePrincipal,sql));
+    const replay=await withIdempotencyKey('db-request-1',()=>service.query('project-a',writePrincipal,sql));
+    assert.equal(first.changedRows,1);assert.equal(replay.changedRows,1);
+    const count=await service.query('project-a',readPrincipal,'SELECT COUNT(*) AS n FROM items');assert.equal(count.rows[0]?.['n'],3);
+    await assert.rejects(withIdempotencyKey('db-request-1',()=>service.query('project-a',writePrincipal,"INSERT INTO items(name) VALUES ('different')")),ConflictError);
   } finally {state.close();await temp.cleanup();}
 });
 
