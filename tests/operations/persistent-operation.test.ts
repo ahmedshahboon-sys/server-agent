@@ -30,12 +30,12 @@ test('persistent operation returns immediately, replays by idempotency key, and 
     const replay=manager.start('VALIDATION','project-a',task.taskId,async()=>({result:{unexpected:true}}),'request-1');
     assert.equal(replay.operationId,first.operationId);
     assert.throws(()=>manager.start('DEPLOYMENT','project-a',task.taskId,async()=>({result:{ok:true}}),'request-2'),ConflictError);
-    finish({targetId:'validation-1',result:{passed:true}});
+    finish({targetId:'validation-1',result:{ok:true}});
     await manager.shutdown();
     const completed=manager.get(first.operationId);
     assert.equal(completed?.status,'SUCCEEDED');
     assert.equal(completed?.targetId,'validation-1');
-    assert.deepEqual(completed?.result,{passed:true});
+    assert.deepEqual(completed?.result,{ok:true});
   }finally{db.close();}
 });
 
