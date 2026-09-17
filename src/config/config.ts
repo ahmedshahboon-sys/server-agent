@@ -28,10 +28,26 @@ export interface ServerAgentConfig {
 const LOG_LEVELS = new Set<LogLevel>(['debug', 'info', 'warn', 'error']);
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
-function positiveInt(value: string | undefined, fallback: number, name: string): number {
+const LIMITS = {
+  maxFileBytes: 16_777_216,
+  maxCommandOutputBytes: 4_194_304,
+  commandTimeoutMs: 1_800_000,
+  maxFixAttempts: 10,
+  maxConcurrentJobs: 8,
+  databaseQueryTimeoutMs: 120_000,
+  databaseMaxRows: 10_000,
+  databaseMaxResultBytes: 8_388_608,
+  maxLogOutputBytes: 4_194_304,
+  maxRecoveryAttempts: 10,
+  mcpMaxBodyBytes: 4_194_304,
+} as const;
+
+function boundedPositiveInt(value: string | undefined, fallback: number, name: string, maximum: number): number {
   if (value === undefined || value === '') return fallback;
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new ValidationError(`${name} must be a positive integer`);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > maximum) {
+    throw new ValidationError(`${name} must be an integer between 1 and ${maximum}`);
+  }
   return parsed;
 }
 
@@ -43,9 +59,7 @@ function strictBoolean(value: string | undefined, fallback: boolean, name: strin
 }
 
 function boundedPort(value: string | undefined, fallback: number): number {
-  const port = positiveInt(value, fallback, 'SERVER_AGENT_MCP_PORT');
-  if (port > 65535) throw new ValidationError('SERVER_AGENT_MCP_PORT must be a valid TCP port');
-  return port;
+  return boundedPositiveInt(value, fallback, 'SERVER_AGENT_MCP_PORT', 65535);
 }
 
 function mcpPath(value: string | undefined): string {
@@ -84,20 +98,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerAgentCon
     dataDir,
     dbPath,
     logLevel: level,
-    maxFileBytes: positiveInt(env.SERVER_AGENT_MAX_FILE_BYTES, 1_048_576, 'SERVER_AGENT_MAX_FILE_BYTES'),
-    maxCommandOutputBytes: positiveInt(env.SERVER_AGENT_MAX_COMMAND_OUTPUT_BYTES, 262_144, 'SERVER_AGENT_MAX_COMMAND_OUTPUT_BYTES'),
-    commandTimeoutMs: positiveInt(env.SERVER_AGENT_COMMAND_TIMEOUT_MS, 120_000, 'SERVER_AGENT_COMMAND_TIMEOUT_MS'),
-    maxFixAttempts: positiveInt(env.SERVER_AGENT_MAX_FIX_ATTEMPTS, 3, 'SERVER_AGENT_MAX_FIX_ATTEMPTS'),
-    maxConcurrentJobs: positiveInt(env.SERVER_AGENT_MAX_CONCURRENT_JOBS, 1, 'SERVER_AGENT_MAX_CONCURRENT_JOBS'),
-    databaseQueryTimeoutMs: positiveInt(env.SERVER_AGENT_DATABASE_QUERY_TIMEOUT_MS, 10_000, 'SERVER_AGENT_DATABASE_QUERY_TIMEOUT_MS'),
-    databaseMaxRows: positiveInt(env.SERVER_AGENT_DATABASE_MAX_ROWS, 500, 'SERVER_AGENT_DATABASE_MAX_ROWS'),
-    databaseMaxResultBytes: positiveInt(env.SERVER_AGENT_DATABASE_MAX_RESULT_BYTES, 1_048_576, 'SERVER_AGENT_DATABASE_MAX_RESULT_BYTES'),
-    maxLogOutputBytes: positiveInt(env.SERVER_AGENT_MAX_LOG_OUTPUT_BYTES, 262_144, 'SERVER_AGENT_MAX_LOG_OUTPUT_BYTES'),
-    maxRecoveryAttempts: positiveInt(env.SERVER_AGENT_MAX_RECOVERY_ATTEMPTS, 3, 'SERVER_AGENT_MAX_RECOVERY_ATTEMPTS'),
+    maxFileBytes: boundedPositiveInt(env.SERVER_AGENT_MAX_FILE_BYTES, 1_048_576, 'SERVER_AGENT_MAX_FILE_BYTES', LIMITS.maxFileBytes),
+    maxCommandOutputBytes: boundedPositiveInt(env.SERVER_AGENT_MAX_COMMAND_OUTPUT_BYTES, 262_144, 'SERVER_AGENT_MAX_COMMAND_OUTPUT_BYTES', LIMITS.maxCommandOutputBytes),
+    commandTimeoutMs: boundedPositiveInt(env.SERVER_AGENT_COMMAND_TIMEOUT_MS, 120_000, 'SERVER_AGENT_COMMAND_TIMEOUT_MS', LIMITS.commandTimeoutMs),
+    maxFixAttempts: boundedPositiveInt(env.SERVER_AGENT_MAX_FIX_ATTEMPTS, 3, 'SERVER_AGENT_MAX_FIX_ATTEMPTS', LIMITS.maxFixAttempts),
+    maxConcurrentJobs: boundedPositiveInt(env.SERVER_AGENT_MAX_CONCURRENT_JOBS, 1, 'SERVER_AGENT_MAX_CONCURRENT_JOBS', LIMITS.maxConcurrentJobs),
+    databaseQueryTimeoutMs: boundedPositiveInt(env.SERVER_AGENT_DATABASE_QUERY_TIMEOUT_MS, 10_000, 'SERVER_AGENT_DATABASE_QUERY_TIMEOUT_MS', LIMITS.databaseQueryTimeoutMs),
+    databaseMaxRows: boundedPositiveInt(env.SERVER_AGENT_DATABASE_MAX_ROWS, 500, 'SERVER_AGENT_DATABASE_MAX_ROWS', LIMITS.databaseMaxRows),
+    databaseMaxResultBytes: boundedPositiveInt(env.SERVER_AGENT_DATABASE_MAX_RESULT_BYTES, 1_048_576, 'SERVER_AGENT_DATABASE_MAX_RESULT_BYTES', LIMITS.databaseMaxResultBytes),
+    maxLogOutputBytes: boundedPositiveInt(env.SERVER_AGENT_MAX_LOG_OUTPUT_BYTES, 262_144, 'SERVER_AGENT_MAX_LOG_OUTPUT_BYTES', LIMITS.maxLogOutputBytes),
+    maxRecoveryAttempts: boundedPositiveInt(env.SERVER_AGENT_MAX_RECOVERY_ATTEMPTS, 3, 'SERVER_AGENT_MAX_RECOVERY_ATTEMPTS', LIMITS.maxRecoveryAttempts),
     mcpHost: host,
     mcpPort: boundedPort(env.SERVER_AGENT_MCP_PORT, 8765),
     mcpPath: mcpPath(env.SERVER_AGENT_MCP_PATH),
-    mcpMaxBodyBytes: positiveInt(env.SERVER_AGENT_MCP_MAX_BODY_BYTES, 1_048_576, 'SERVER_AGENT_MCP_MAX_BODY_BYTES'),
+    mcpMaxBodyBytes: boundedPositiveInt(env.SERVER_AGENT_MCP_MAX_BODY_BYTES, 1_048_576, 'SERVER_AGENT_MCP_MAX_BODY_BYTES', LIMITS.mcpMaxBodyBytes),
     mcpAllowedOrigins: origins(env.SERVER_AGENT_MCP_ALLOWED_ORIGINS),
     mcpAllowPublicBind: allowPublicBind,
   };
