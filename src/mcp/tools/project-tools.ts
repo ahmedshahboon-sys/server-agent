@@ -59,8 +59,8 @@ export function registerProjectTools(registry: McpToolRegistry, projects: Projec
     handler: async (args) => projects.disable(stringArg(args, 'project_id') ?? ''),
   });
   registry.register({
-    definition: { name: 'remove_project', description: 'Remove only the Server Agent registry entry. Project files are never deleted.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) },
+    definition: { name: 'remove_project', description: 'Archive the Server Agent registry entry as a tombstone so historical records remain valid. Project files are never deleted.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) },
     permission: 'project:manage', projectArgument: 'project_id',
-    handler: async (args) => { projects.remove(stringArg(args, 'project_id') ?? ''); return { ok: true }; },
+    handler: async (args) => { projects.remove(stringArg(args, 'project_id') ?? ''); return { ok: true, archived: true }; },
   });
 }
