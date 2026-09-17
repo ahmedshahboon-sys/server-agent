@@ -6,6 +6,7 @@ import type { Principal, JobStatus } from '../core/types.js';
 import { ConflictError, ValidationError } from '../core/errors.js';
 import { RestrictedCommandRunner } from '../commands/command-runner.js';
 import { redactError, redactValue } from '../security/redaction.js';
+import { currentIdempotencyKey } from '../idempotency/context.js';
 import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from '../operations/operation-lease.js';
 
@@ -36,16 +37,17 @@ export class JobManager {
   }
 
   public async start(projectId:string,principal:Principal,commandId:string,taskId?:string,idempotencyKey?:string):Promise<JobRecord>{
+    const effectiveKey=idempotencyKey??currentIdempotencyKey();
     const scope=`job-start:${projectId}`;
     const fingerprint=idempotencyFingerprint({projectId,commandId,taskId:taskId??null});
-    if(idempotencyKey!==undefined&&this.idempotency!==undefined){
-      const replay=this.idempotency.requireReplayable(scope,idempotencyKey,fingerprint);
+    if(effectiveKey!==undefined&&this.idempotency!==undefined){
+      const replay=this.idempotency.requireReplayable(scope,effectiveKey,fingerprint);
       if(replay!==null){
         const jobId=(replay.result as {jobId?:unknown}|null)?.jobId;
         if(typeof jobId!=='string')throw new ConflictError('Stored idempotent job result is invalid');
         return this.getRequired(jobId);
       }
-      this.idempotency.begin(scope,idempotencyKey,fingerprint);
+      this.idempotency.begin(scope,effectiveKey,fingerprint);
     }
 
     const id=randomUUID(),dir=path.join(this.outputDir,'jobs',id),stdoutPath=path.join(dir,'stdout.log'),stderrPath=path.join(dir,'stderr.log');
@@ -85,12 +87,12 @@ export class JobManager {
         .catch(error=>{const safe=redactError(error);try{if(errFd!==undefined)writeSync(errFd,`${JSON.stringify(safe)}\n`);}catch{}const status:JobStatus=controller.signal.aborted?'CANCELLED':'FAILED';this.db.raw.prepare('UPDATE jobs SET status=?,finished_at=?,error_json=? WHERE job_id=?').run(status,new Date().toISOString(),JSON.stringify(safe),id);if(taskId!==undefined)this.appendTaskCommand(taskId,{jobId:id,commandId,status,error:safe});})
         .finally(()=>{try{if(outFd!==undefined)closeSync(outFd);}catch{}try{if(errFd!==undefined)closeSync(errFd);}catch{}this.controllers.delete(id);this.active.delete(id);if(leaseHeld)this.leases?.release(projectId,leaseOwner);});
       this.active.set(id,execution);
-      if(idempotencyKey!==undefined&&this.idempotency!==undefined)this.idempotency.complete(scope,idempotencyKey,{jobId:id});
+      if(effectiveKey!==undefined&&this.idempotency!==undefined)this.idempotency.complete(scope,effectiveKey,{jobId:id});
       return this.getRequired(id);
     }catch(error){
       try{if(stdoutFd!==undefined)closeSync(stdoutFd);}catch{}try{if(stderrFd!==undefined)closeSync(stderrFd);}catch{}
       if(leaseHeld)this.leases?.release(projectId,leaseOwner);
-      if(idempotencyKey!==undefined&&this.idempotency!==undefined){const record=this.idempotency.get(scope,idempotencyKey);if(record?.status==='IN_PROGRESS')this.idempotency.fail(scope,idempotencyKey,redactError(error));}
+      if(effectiveKey!==undefined&&this.idempotency!==undefined){const record=this.idempotency.get(scope,effectiveKey);if(record?.status==='IN_PROGRESS')this.idempotency.fail(scope,effectiveKey,redactError(error));}
       throw error;
     }
   }
@@ -109,6 +111,6 @@ export class JobManager {
   }
 
   public async shutdown():Promise<void>{for(const controller of this.controllers.values())controller.abort();await Promise.allSettled([...this.active.values()]);}
-  private appendTaskCommand(taskId:string,value:unknown):void{const row=this.db.raw.prepare('SELECT commands_executed_json FROM tasks WHERE task_id=?').get(taskId) as {commands_executed_json:string}|undefined;if(row===undefined)return;const items=JSON.parse(row.commands_executed_json) as unknown[];items.push(redactValue(value));this.db.raw.prepare('UPDATE tasks SET commands_executed_json=?,updated_at=? WHERE task_id=?').run(JSON.stringify(items),new Date().toISOString(),taskId);}
+  private appendTaskCommand(taskId:string,value:unknown):void{this.db.raw.exec('BEGIN IMMEDIATE;');try{const row=this.db.raw.prepare('SELECT commands_executed_json FROM tasks WHERE task_id=?').get(taskId) as {commands_executed_json:string}|undefined;if(row===undefined){this.db.raw.exec('COMMIT;');return;}const items=JSON.parse(row.commands_executed_json) as unknown[];items.push(redactValue(value));this.db.raw.prepare('UPDATE tasks SET commands_executed_json=?,updated_at=? WHERE task_id=?').run(JSON.stringify(items),new Date().toISOString(),taskId);this.db.raw.exec('COMMIT;');}catch(error){this.db.raw.exec('ROLLBACK;');throw error;}}
   private getRequired(id:string):JobRecord{const j=this.get(id);if(j===null)throw new ValidationError('Job not found');return j;}
 }
