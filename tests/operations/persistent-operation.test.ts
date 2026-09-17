@@ -12,7 +12,7 @@ import { projectFixture } from '../helpers.js';
 function setup(){
   const db=new SqliteDatabase(':memory:');
   const projects=new ProjectRegistry(db);
-  projects.create(projectFixture({serviceName:undefined,health:{type:'none'},database:{adapter:'none',defaultAccess:'read'},deployment:{strategy:'none',requireClean:true,validationRequired:false,restartService:false,healthRequired:false},permissions:['project:read','tasks:read','tasks:write','commands:run'],environmentRefs:[]}));
+  projects.create(projectFixture({health:{type:'none'},database:{adapter:'none',defaultAccess:'read'},deployment:{strategy:'none',requireClean:true,validationRequired:false,restartService:false,healthRequired:false},permissions:['project:read','tasks:read','tasks:write','commands:run'],environmentRefs:[]}));
   const tasks=new TaskEngine(db);
   const task=tasks.create('project-a','durable operation');
   const idempotency=new IdempotencyStore(db),leases=new OperationLeaseStore(db);
