@@ -20,7 +20,7 @@ function map(row: Row): IdempotencyRecord {
 }
 
 function stable(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (value === null || typeof value !== 'object') { const encoded=JSON.stringify(value); return encoded===undefined?String(value):encoded; }
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
   if (value instanceof Uint8Array) return `"bytes:${Buffer.from(value).toString('base64')}"`;
   const record = value as Record<string, unknown>;
@@ -77,8 +77,9 @@ export class IdempotencyStore {
   private finish(scope:string,key:string,status:IdempotencyStatus,result:unknown):IdempotencyRecord {
     const current = this.getRequired(scope,key);
     if (current.status !== 'IN_PROGRESS' && current.status !== status) throw new ConflictError('Idempotency operation is already terminal');
+    const serialized=JSON.stringify(redactValue(result))??'null';
     this.db.raw.prepare('UPDATE idempotency_keys SET status=?, result_json=?, updated_at=? WHERE scope=? AND idempotency_key=?')
-      .run(status, JSON.stringify(redactValue(result)), new Date().toISOString(), scope, key);
+      .run(status, serialized, new Date().toISOString(), scope, key);
     return this.getRequired(scope,key);
   }
 
