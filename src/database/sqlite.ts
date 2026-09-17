@@ -293,7 +293,6 @@ export class SqliteDatabase {
         this.raw.exec(migration.sql);
         insert.run(migration.version, new Date().toISOString());
       }
-      this.db.raw?.exec?.('');
       this.raw.exec('COMMIT;');
     } catch (error) {
       this.raw.exec('ROLLBACK;');
