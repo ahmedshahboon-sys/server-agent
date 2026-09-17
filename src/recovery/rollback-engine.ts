@@ -10,7 +10,7 @@ import { GitService } from '../git/git-service.js';
 import { RestrictedCommandRunner } from '../commands/command-runner.js';
 import { TaskEngine } from '../tasks/task-engine.js';
 import { HealthCheckService, type HealthCheckResult } from '../health/health-service.js';
-import type { ServiceController } from '../services/service-controller.js';
+import type { ServiceController, ServiceSnapshot } from '../services/service-controller.js';
 import { redactError, redactValue } from '../security/redaction.js';
 import { assessMigrationRollback, type MigrationRollbackAssessment } from './migration-safety.js';
 
@@ -150,7 +150,7 @@ export class RollbackEngine {
     const startedAt = new Date().toISOString();
     this.db.raw.prepare("UPDATE rollback_plans SET status='ROLLING_BACK',started_at=? WHERE rollback_id=?").run(startedAt, rollbackId);
     this.tasks.setStatus(plan.taskId, 'ROLLING_BACK');
-    this.tasks.checkpoint(plan.taskId, { currentStep: 'rollback', completedSteps: [], remainingSteps: ['rollback', 'health-check'], metadata: { rollbackId, targetCommit: plan.targetCommit } });
+    this.tasks.checkpoint(plan.taskId, { currentStep: 'rollback', completedSteps: [], remainingSteps: ['rollback', 'git-verification', 'service-verification', 'health-check'], metadata: { rollbackId, targetCommit: plan.targetCommit } });
 
     try {
       if (plan.targetCommit === null) throw new RollbackBlockedError('Rollback target is unavailable');
@@ -158,7 +158,18 @@ export class RollbackEngine {
       const commandSummary = { id: 'rollback', exitCode: command.exitCode, durationMs: command.durationMs, truncated: command.stdoutTruncated || command.stderrTruncated };
       this.tasks.recordCommand(plan.taskId, commandSummary);
       if (command.exitCode !== 0) throw new ValidationError('Rollback command failed', { exitCode: command.exitCode, stderr: command.stderr });
+
+      const headAfter = (await this.git.headCommit(projectId, internal)).stdout.trim() || null;
+      if (headAfter !== plan.targetCommit) throw new RollbackBlockedError('Rollback command completed but Git HEAD does not match the target commit');
+      this.tasks.setGitReferences(plan.taskId, plan.targetCommit, headAfter);
+
       if (project.deployment.restartService && project.serviceName !== undefined) await this.services.restart(project.serviceName);
+      let serviceSnapshot:ServiceSnapshot|null=null;
+      if(project.serviceName!==undefined){
+        serviceSnapshot=await this.services.status(project.serviceName);
+        this.tasks.recordCommand(plan.taskId,{id:'service-status',service:project.serviceName,active:serviceSnapshot.active,state:serviceSnapshot.state});
+        if(!serviceSnapshot.active)throw new HealthCheckError(`Post-rollback service state is ${serviceSnapshot.state}`);
+      }
 
       let health: HealthCheckResult | null = null;
       if (project.health.type !== 'none') {
@@ -168,12 +179,11 @@ export class RollbackEngine {
         this.tasks.setHealthResult(plan.taskId, health);
         if (project.deployment.healthRequired && health.state !== 'HEALTHY') throw new HealthCheckError(`Post-rollback health is ${health.state}`);
       }
-      const headAfter = (await this.git.headCommit(projectId, internal)).stdout.trim() || null;
       const finishedAt = new Date().toISOString();
-      const result = redactValue({ ok: true, command: commandSummary, health, headAfter, targetCommit: plan.targetCommit });
+      const result = redactValue({ ok: true, command: commandSummary, health, service:serviceSnapshot, headAfter, targetCommit: plan.targetCommit, targetVerified:true });
       this.db.raw.prepare("UPDATE rollback_plans SET status='SUCCEEDED',finished_at=?,result_json=? WHERE rollback_id=?").run(finishedAt, JSON.stringify(result), rollbackId);
-      this.tasks.setRollbackState(plan.taskId, { rollbackId, status: 'SUCCEEDED', targetCommit: plan.targetCommit, health, headAfter });
-      this.tasks.checkpoint(plan.taskId, { currentStep: 'rolled-back', completedSteps: ['rollback', ...(health === null ? [] : ['health-check'])], remainingSteps: [], metadata: { rollbackId, headAfter } });
+      this.tasks.setRollbackState(plan.taskId, { rollbackId, status: 'SUCCEEDED', targetCommit: plan.targetCommit, health, service:serviceSnapshot, headAfter, targetVerified:true });
+      this.tasks.checkpoint(plan.taskId, { currentStep: 'rolled-back', completedSteps: ['rollback','git-verification', ...(serviceSnapshot === null ? [] : ['service-verification']), ...(health === null ? [] : ['health-check'])], remainingSteps: [], metadata: { rollbackId, headAfter, targetVerified:true } });
       this.tasks.setStatus(plan.taskId, 'ROLLED_BACK');
       return this.getRequired(rollbackId);
     } catch (error) {
