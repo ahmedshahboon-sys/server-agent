@@ -17,6 +17,7 @@ import { JobManager } from '../jobs/job-manager.js';
 import { TaskEngine } from '../tasks/task-engine.js';
 import { IdempotencyStore } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from '../operations/operation-lease.js';
+import { PersistentOperationManager } from '../operations/persistent-operation.js';
 import { LocalValidationPipeline } from '../validation/local-ci.js';
 import { SystemdServiceController, ProjectServiceManager } from '../services/service-controller.js';
 import { JournalLogReader } from '../logs/journal-logs.js';
@@ -57,6 +58,7 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
   const idempotency=new IdempotencyStore(db);
   const leases=new OperationLeaseStore(db);
   const reclaimedLeases=leases.reclaimExpired();
+  const operations=new PersistentOperationManager(db,idempotency,leases,runtimeInstanceId,60_000);
   const projects = new ProjectRegistry(db);
   const authorizer = new DefaultDenyAuthorizer();
   const files = new ProjectFileService(projects, authorizer, { maxFileBytes: config.maxFileBytes });
@@ -73,19 +75,21 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
   const logs = new JournalLogReader(projects, authorizer, env, config.maxLogOutputBytes);
   const health = new HealthCheckService(db, projects, authorizer, serviceController, new FetchHttpProbe(), databaseFactory);
   const deployments = new DeploymentEngine(db, projects, authorizer, git, runner, validation, tasks, health, serviceController, databaseFactory);
-  const evidence = new RecoveryEvidenceCollector(db, projects, authorizer, tasks, deployments, git, logs);
+  const evidence = new RecoveryEvidenceCollector(db, projects, authorizer, tasks, deployments, git, logs, services);
   const recovery = new RecoveryEngine(db, projects, authorizer, tasks, deployments, evidence, config.maxRecoveryAttempts);
   const rollback = new RollbackEngine(db, projects, authorizer, deployments, git, runner, tasks, health, serviceController, databaseFactory);
 
-  const interruptedTasks = tasks.markInterruptedForRecovery();
+  const reconciledOperations=operations.reconcileAfterRestart();
   const reconciledJobs = jobs.reconcileAfterRestart();
-  if (interruptedTasks > 0 || reconciledJobs > 0 || reclaimedLeases > 0) logger.warn('Recovered interrupted runtime state', { interruptedTasks, reconciledJobs, reclaimedLeases });
+  const interruptedTasks = tasks.markInterruptedForRecovery();
+  const unknownWorkTasks=tasks.markUnknownWorkForRecovery();
+  if (interruptedTasks > 0 || unknownWorkTasks>0 || reconciledJobs > 0 || reconciledOperations>0 || reclaimedLeases > 0) logger.warn('Recovered interrupted runtime state', { interruptedTasks, unknownWorkTasks, reconciledJobs, reconciledOperations, reclaimedLeases });
 
   const server = createServerAgentMcpServer({
     authorizer,
     stateDatabase: db,
     authenticator: new StaticBearerAuthenticator(authentication.token, authentication.principal),
-    services: { projects, files, git, jobs, validation, database, tasks, deployments, health, logs, services, recovery, rollback },
+    services: { projects, files, git, jobs, operations, validation, database, tasks, deployments, health, logs, services, recovery, rollback },
     transport: { path: config.mcpPath, maxBodyBytes: config.mcpMaxBodyBytes, allowedOrigins: config.mcpAllowedOrigins, serverName: 'server-agent', serverVersion: SERVER_VERSION },
   });
   server.requestTimeout = 15_000;
@@ -100,7 +104,7 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
     shuttingDown = true;
     logger.info('Server Agent stopping', { signal });
     const serverClosed = close(server);
-    await jobs.shutdown();
+    await Promise.all([operations.shutdown(),jobs.shutdown()]);
     await serverClosed;
     db.close();
     logger.info('Server Agent stopped');
