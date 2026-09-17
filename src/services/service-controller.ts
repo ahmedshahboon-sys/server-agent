@@ -3,6 +3,7 @@ import type { Authorizer, ProjectStore } from '../core/interfaces.js';
 import type { Principal } from '../core/types.js';
 import { AuthorizationError, ValidationError } from '../core/errors.js';
 import { executeArgv } from '../commands/process-executor.js';
+import { currentIdempotencyKey } from '../idempotency/context.js';
 import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from '../operations/operation-lease.js';
 import { redactError } from '../security/redaction.js';
@@ -71,15 +72,16 @@ export class ProjectServiceManager {
     if (project.serviceName === undefined) throw new ValidationError('Project has no service configured');
     const store=this.mutationSafety.idempotency;
     if(store===undefined){await this.controller.restart(project.serviceName);return;}
-    if(idempotencyKey===undefined||idempotencyKey.trim()==='')throw new ValidationError('idempotency_key is required for service restart');
+    const effectiveKey=idempotencyKey??currentIdempotencyKey();
+    if(effectiveKey===undefined||effectiveKey.trim()==='')throw new ValidationError('idempotency_key is required for service restart');
     const scope=`service-restart:${projectId}`,fingerprint=idempotencyFingerprint({serviceName:project.serviceName});
-    const replay=store.requireReplayable(scope,idempotencyKey,fingerprint);if(replay!==null)return;
-    store.begin(scope,idempotencyKey,fingerprint);
-    const owner=`${this.mutationOwner}:restart:${idempotencyKey}`;let lease=false;
+    const replay=store.requireReplayable(scope,effectiveKey,fingerprint);if(replay!==null)return;
+    store.begin(scope,effectiveKey,fingerprint);
+    const owner=`${this.mutationOwner}:restart:${effectiveKey}`;let lease=false;
     try{
       if(this.mutationSafety.leases!==undefined){this.mutationSafety.leases.acquire(projectId,'service-restart',owner,this.mutationSafety.leaseTtlMs??60_000);lease=true;}
-      await this.controller.restart(project.serviceName);store.complete(scope,idempotencyKey,{ok:true,serviceName:project.serviceName});
-    }catch(error){const current=store.get(scope,idempotencyKey);if(current?.status==='IN_PROGRESS')store.fail(scope,idempotencyKey,redactError(error));throw error;}
+      await this.controller.restart(project.serviceName);store.complete(scope,effectiveKey,{ok:true,serviceName:project.serviceName});
+    }catch(error){const current=store.get(scope,effectiveKey);if(current?.status==='IN_PROGRESS')store.fail(scope,effectiveKey,redactError(error));throw error;}
     finally{if(lease)this.mutationSafety.leases?.release(projectId,owner);}
   }
 }
