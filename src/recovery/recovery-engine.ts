@@ -36,6 +36,9 @@ type Row = {
 function parse(value:string|null):unknown{return value===null?null:JSON.parse(value) as unknown;}
 function map(row:Row):RecoveryRun{return{recoveryId:row.recovery_id,taskId:row.task_id,projectId:row.project_id,deploymentId:row.deployment_id,attempt:row.attempt,status:row.status,reason:row.reason,evidence:parse(row.evidence_json) as RecoveryEvidence,decision:parse(row.decision_json) as RecoveryDecision|null,startedAt:row.started_at,finishedAt:row.finished_at,error:parse(row.error_json)};}
 function systemPrincipal(projectId:string,permissions:readonly ProjectPermission[]):Principal{return{id:'recovery-engine',kind:'system',projectScopes:[projectId],permissions};}
+function field(record:Readonly<Record<string,unknown>>,name:string):unknown{return record[name];}
+function stringField(record:Readonly<Record<string,unknown>>,name:string):string|null{const value=field(record,name);return typeof value==='string'?value:null;}
+function boolField(record:Readonly<Record<string,unknown>>,name:string):boolean|null{const value=field(record,name);return typeof value==='boolean'?value:null;}
 
 export class RecoveryEngine {
   public constructor(
@@ -73,7 +76,7 @@ export class RecoveryEngine {
     let collected:RecoveryEvidence;
     try{collected=await this.evidence.collect(taskId,projectId,internal);}catch(error){
       const safe=redactError(error);
-      const fallback=redactValue({projectId,taskId,collectedAt:new Date().toISOString(),task:{status:task.status},deployment:null,validation:[],jobs:[],health:[],git:{available:false},logs:{available:false},evidenceError:safe}) as unknown as RecoveryEvidence;
+      const fallback=redactValue({projectId,taskId,collectedAt:new Date().toISOString(),task:{status:task.status},deployment:null,operations:[],validation:[],jobs:[],health:[],service:{available:false},git:{available:false},logs:{available:false},evidenceError:safe}) as unknown as RecoveryEvidence;
       this.db.raw.prepare('INSERT INTO recovery_runs(recovery_id,task_id,project_id,deployment_id,attempt,status,reason,evidence_json,decision_json,started_at,finished_at,error_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(recoveryId,taskId,projectId,task.deploymentId,attempt,'FAILED',reason,JSON.stringify(fallback),null,startedAt,new Date().toISOString(),JSON.stringify(safe));
       this.tasks.setStatus(taskId,'WAITING_FOR_USER');
@@ -83,7 +86,7 @@ export class RecoveryEngine {
     this.db.raw.prepare('INSERT INTO recovery_runs(recovery_id,task_id,project_id,deployment_id,attempt,status,reason,evidence_json,decision_json,started_at,finished_at,error_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(recoveryId,taskId,projectId,task.deploymentId,attempt,'ASSESSING',reason,JSON.stringify(redactValue(collected)),null,startedAt,null,null);
 
-    const decision=this.decide(taskId);
+    const decision=this.decide(taskId,collected);
     const status:RecoveryStatus=decision.action==='RESUME_RECOMMENDED'?'RESUME_RECOMMENDED':decision.action==='ROLLBACK_REQUIRED'?'ROLLBACK_REQUIRED':'MANUAL_REQUIRED';
     const finishedAt=new Date().toISOString();
     this.db.raw.prepare('UPDATE recovery_runs SET status=?,decision_json=?,finished_at=? WHERE recovery_id=?').run(status,JSON.stringify(redactValue(decision)),finishedAt,recoveryId);
@@ -94,22 +97,40 @@ export class RecoveryEngine {
     return this.getRequired(recoveryId);
   }
 
-  private decide(taskId:string):RecoveryDecision{
+  private decide(taskId:string,evidence:RecoveryEvidence):RecoveryDecision{
     const task=this.tasks.get(taskId);if(task===null)throw new ValidationError('Task not found');
+    const project=this.projects.get(task.projectId);if(project===null)throw new ValidationError('Project not found');
     const deployment=task.deploymentId===null?null:this.deployments.get(task.deploymentId);
-    const lastConfirmedState={checkpoint:task.checkpoint,currentStep:task.currentStep,gitCommitBefore:task.gitCommitBefore,gitCommitAfter:task.gitCommitAfter,deploymentStatus:deployment?.status??null,health:task.healthCheckResults};
+    const unresolvedOperation=evidence.operations.find((item)=>['RUNNING','UNKNOWN'].includes(stringField(item,'status')??''));
+    const unresolvedJob=evidence.jobs.find((item)=>['RUNNING','UNKNOWN'].includes(stringField(item,'status')??''));
+    const gitAvailable=boolField(evidence.git,'available')===true;
+    const gitHead=stringField(evidence.git,'head');
+    const serviceAvailable=boolField(evidence.service,'available')===true;
+    const serviceActive=boolField(evidence.service,'active');
+    const latestHealth=evidence.health[0];
+    const latestHealthState=latestHealth===undefined?null:stringField(latestHealth,'state');
+    const lastConfirmedState={
+      checkpoint:task.checkpoint,currentStep:task.currentStep,gitCommitBefore:task.gitCommitBefore,gitCommitAfter:task.gitCommitAfter,
+      deploymentStatus:deployment?.status??null,gitHead,service:evidence.service,latestHealth:latestHealthState,
+      latestOperation:evidence.operations[0]??null,latestJob:evidence.jobs[0]??null,
+    };
+
+    if(unresolvedOperation!==undefined)return{action:'WAITING_FOR_USER',reason:`Persistent operation ${stringField(unresolvedOperation,'operationId')??'unknown'} is ${stringField(unresolvedOperation,'status')??'unresolved'}; mutating work cannot be replayed`,lastConfirmedState};
+    if(unresolvedJob!==undefined)return{action:'WAITING_FOR_USER',reason:`Job ${stringField(unresolvedJob,'jobId')??'unknown'} is ${stringField(unresolvedJob,'status')??'unresolved'}; command effects are not assumed`,lastConfirmedState};
+    if(task.deploymentId!==null&&deployment===null)return{action:'WAITING_FOR_USER',reason:'Task references a deployment record that is missing',lastConfirmedState};
+
     if(deployment!==null&&deployment.status==='FAILED'&&deployment.rollbackAvailable){
-      return{action:'ROLLBACK_REQUIRED',reason:'Deployment failed and a last-known-good rollback reference exists',lastConfirmedState};
+      if(deployment.gitCommitAfter!==null&&(!gitAvailable||gitHead!==deployment.gitCommitAfter))return{action:'WAITING_FOR_USER',reason:'Failed deployment is rollback-capable but current Git HEAD is not verified at the deployed commit',lastConfirmedState};
+      return{action:'ROLLBACK_REQUIRED',reason:'Deployment failed, rollback is available, and the deployed Git state is verified',lastConfirmedState};
     }
-    if(task.deploymentId!==null&&deployment===null){
-      return{action:'WAITING_FOR_USER',reason:'Task references a deployment record that is missing',lastConfirmedState};
-    }
-    if(deployment!==null&&deployment.status==='SUCCEEDED'){
-      return{action:'RESUME_RECOMMENDED',reason:'Deployment record confirms success; resume from the last checkpoint after reviewing evidence',lastConfirmedState};
-    }
-    if(task.resumable&&task.checkpoint!==null){
-      return{action:'RESUME_RECOMMENDED',reason:'A persistent checkpoint exists; no mutating step is replayed automatically',lastConfirmedState};
-    }
+
+    const expectedHead=task.gitCommitAfter??task.gitCommitBefore;
+    if(expectedHead!==null&&(!gitAvailable||gitHead!==expectedHead))return{action:'WAITING_FOR_USER',reason:'Current Git HEAD does not match the last confirmed task commit',lastConfirmedState};
+    if(project.serviceName!==undefined&&(!serviceAvailable||serviceActive!==true))return{action:'WAITING_FOR_USER',reason:'Registered service state is not confirmed active',lastConfirmedState};
+    if(project.deployment.healthRequired&&latestHealthState!=='HEALTHY')return{action:'WAITING_FOR_USER',reason:'Required health state is not confirmed HEALTHY',lastConfirmedState};
+
+    if(deployment!==null&&deployment.status==='SUCCEEDED')return{action:'RESUME_RECOMMENDED',reason:'Deployment, Git state, service state, and required health evidence are consistent',lastConfirmedState};
+    if(task.resumable&&task.checkpoint!==null)return{action:'RESUME_RECOMMENDED',reason:'Checkpoint exists and no unresolved job/operation or conflicting Git/service/health evidence remains',lastConfirmedState};
     return{action:'WAITING_FOR_USER',reason:'No confirmed safe resume or rollback state is available',lastConfirmedState};
   }
 
