@@ -26,6 +26,8 @@ export interface PersistentOperationRecord {
 export interface PersistentOperationResult {
   readonly targetId?: string;
   readonly result: unknown;
+  readonly succeeded?: boolean;
+  readonly error?: unknown;
 }
 
 type Row = {
@@ -132,8 +134,14 @@ export class PersistentOperationManager {
     try{
       const outcome=await run();
       const safe=redactValue(outcome.result);
-      this.db.raw.prepare("UPDATE persistent_operations SET status='SUCCEEDED',target_id=?,finished_at=?,result_json=? WHERE operation_id=?")
-        .run(outcome.targetId??null,new Date().toISOString(),JSON.stringify(safe),operationId);
+      if(outcome.succeeded===false){
+        const safeError=redactValue(outcome.error??{message:'Persistent operation reported failure'});
+        this.db.raw.prepare("UPDATE persistent_operations SET status='FAILED',target_id=?,finished_at=?,result_json=?,error_json=? WHERE operation_id=?")
+          .run(outcome.targetId??null,new Date().toISOString(),JSON.stringify(safe),JSON.stringify(safeError),operationId);
+      }else{
+        this.db.raw.prepare("UPDATE persistent_operations SET status='SUCCEEDED',target_id=?,finished_at=?,result_json=? WHERE operation_id=?")
+          .run(outcome.targetId??null,new Date().toISOString(),JSON.stringify(safe),operationId);
+      }
     }catch(error){
       const safe=redactError(error);
       this.db.raw.prepare("UPDATE persistent_operations SET status='FAILED',finished_at=?,error_json=? WHERE operation_id=?")
