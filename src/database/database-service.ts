@@ -2,9 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Authorizer, ProjectStore } from '../core/interfaces.js';
 import type { DatabaseQueryClassification, Principal, ProjectRecord } from '../core/types.js';
-import { AuthorizationError, ConflictError, ValidationError } from '../core/errors.js';
+import { AuthorizationError, ValidationError } from '../core/errors.js';
 import { redactError } from '../security/redaction.js';
 import { ProjectPathSandbox } from '../security/sandbox.js';
+import { currentIdempotencyKey } from '../idempotency/context.js';
 import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from '../operations/operation-lease.js';
 import type { SqliteDatabase } from './sqlite.js';
@@ -113,17 +114,18 @@ export class DatabaseService {
   private async guardedWrite<T>(projectId:string,operation:string,key:string|undefined,fingerprint:string,run:()=>Promise<T>):Promise<T>{
     const store=this.mutationSafety.idempotency;
     if(store===undefined)return run();
-    if(key===undefined||key.trim()==='')throw new ValidationError('idempotency_key is required for database writes');
+    const effectiveKey=key??currentIdempotencyKey();
+    if(effectiveKey===undefined||effectiveKey.trim()==='')throw new ValidationError('idempotency_key is required for database writes');
     const scope=`database-write:${projectId}:${operation}`;
-    const replay=store.requireReplayable(scope,key,fingerprint);
+    const replay=store.requireReplayable(scope,effectiveKey,fingerprint);
     if(replay!==null)return replay.result as T;
-    store.begin(scope,key,fingerprint);
-    const owner=`${this.mutationOwner}:${operation}:${key}`;
+    store.begin(scope,effectiveKey,fingerprint);
+    const owner=`${this.mutationOwner}:${operation}:${effectiveKey}`;
     let lease=false;
     try{
       if(this.mutationSafety.leases!==undefined){this.mutationSafety.leases.acquire(projectId,`database:${operation}`,owner,this.mutationSafety.leaseTtlMs??Math.max(10_000,this.options.timeoutMs+5_000));lease=true;}
-      const result=await run();store.complete(scope,key,result);return result;
-    }catch(error){const current=store.get(scope,key);if(current?.status==='IN_PROGRESS')store.fail(scope,key,redactError(error));throw error;}
+      const result=await run();store.complete(scope,effectiveKey,result);return result;
+    }catch(error){const current=store.get(scope,effectiveKey);if(current?.status==='IN_PROGRESS')store.fail(scope,effectiveKey,redactError(error));throw error;}
     finally{if(lease)this.mutationSafety.leases?.release(projectId,owner);}
   }
 
