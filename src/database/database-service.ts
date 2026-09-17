@@ -2,9 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Authorizer, ProjectStore } from '../core/interfaces.js';
 import type { DatabaseQueryClassification, Principal, ProjectRecord } from '../core/types.js';
-import { AuthorizationError, ValidationError } from '../core/errors.js';
+import { AuthorizationError, ConflictError, ValidationError } from '../core/errors.js';
 import { redactError } from '../security/redaction.js';
 import { ProjectPathSandbox } from '../security/sandbox.js';
+import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
+import { OperationLeaseStore } from '../operations/operation-lease.js';
 import type { SqliteDatabase } from './sqlite.js';
 import type { DatabaseAdapter, DatabaseParameter, DatabaseQueryRequest, DatabaseQueryResult, DatabaseSchemaResult, DatabaseMigrationStatus, DatabaseStatusResult } from './adapter.js';
 import { SqliteProjectAdapter } from './sqlite-adapter.js';
@@ -14,6 +16,13 @@ export interface DatabaseServiceOptions {
   readonly timeoutMs: number;
   readonly maxRows: number;
   readonly maxResultBytes: number;
+}
+
+export interface DatabaseMutationSafety {
+  readonly idempotency?: IdempotencyStore;
+  readonly leases?: OperationLeaseStore;
+  readonly ownerId?: string;
+  readonly leaseTtlMs?: number;
 }
 
 export interface DatabaseAdapterFactory {
@@ -35,13 +44,15 @@ export class ProjectDatabaseAdapterFactory implements DatabaseAdapterFactory {
 }
 
 export class DatabaseService {
+  private readonly mutationOwner:string;
   public constructor(
     private readonly stateDb: SqliteDatabase,
     private readonly projects: ProjectStore,
     private readonly authorizer: Authorizer,
     private readonly factory: DatabaseAdapterFactory,
     private readonly options: DatabaseServiceOptions,
-  ) {}
+    private readonly mutationSafety: DatabaseMutationSafety = {},
+  ) { this.mutationOwner=mutationSafety.ownerId??randomUUID(); }
 
   public async status(projectId: string, principal: Principal): Promise<DatabaseStatusResult> {
     const project = this.requireCapability(projectId, principal, 'READ');
@@ -58,37 +69,62 @@ export class DatabaseService {
     return this.withAdapter(project, (adapter) => adapter.migrationStatus(this.options.timeoutMs));
   }
 
-  public async query(projectId: string, principal: Principal, sql: string, params: readonly DatabaseParameter[] = []): Promise<DatabaseQueryResult & { classification: DatabaseQueryClassification }> {
+  public async query(projectId: string, principal: Principal, sql: string, params: readonly DatabaseParameter[] = [], idempotencyKey?: string): Promise<DatabaseQueryResult & { classification: DatabaseQueryClassification }> {
     const classification = assertNonDestructiveSql(sql).classification;
     const project = this.requireCapability(projectId, principal, classification);
     const request = this.request(sql, params, classification);
-    try {
-      const result = await this.withAdapter(project, (adapter) => adapter.query(request));
-      this.audit(projectId, 'query', classification, sql, result.rowCount + result.changedRows, true);
-      return { ...result, classification };
-    } catch (error) {
-      this.audit(projectId, 'query', classification, sql, null, false, error);
-      throw error;
-    }
+    const execute = async ():Promise<DatabaseQueryResult & { classification: DatabaseQueryClassification }> => {
+      try {
+        const result = await this.withAdapter(project, (adapter) => adapter.query(request));
+        this.audit(projectId, 'query', classification, sql, result.rowCount + result.changedRows, true);
+        return { ...result, classification };
+      } catch (error) {
+        this.audit(projectId, 'query', classification, sql, null, false, error);
+        throw error;
+      }
+    };
+    if(classification!=='WRITE')return execute();
+    return this.guardedWrite(projectId,'query',idempotencyKey,idempotencyFingerprint({sql,params}),execute);
   }
 
-  public async transaction(projectId: string, principal: Principal, statements: readonly { sql: string; params?: readonly DatabaseParameter[] }[]): Promise<readonly DatabaseQueryResult[]> {
+  public async transaction(projectId: string, principal: Principal, statements: readonly { sql: string; params?: readonly DatabaseParameter[] }[], idempotencyKey?: string): Promise<readonly DatabaseQueryResult[]> {
     if (statements.length === 0 || statements.length > 50) throw new ValidationError('Transaction must contain 1-50 statements');
     const classified = statements.map((statement) => ({ statement, classification: assertNonDestructiveSql(statement.sql).classification }));
     const strongest: DatabaseQueryClassification = classified.some((item) => item.classification === 'WRITE') ? 'WRITE' : 'READ';
     const project = this.requireCapability(projectId, principal, strongest);
     const requests = classified.map(({ statement, classification }) => this.request(statement.sql, statement.params ?? [], classification));
-    try {
-      const results = await this.withAdapter(project, (adapter) => adapter.transaction(requests));
-      for (let index = 0; index < classified.length; index += 1) {
-        const item = classified[index]; const result = results[index];
-        if (item !== undefined) this.audit(projectId, 'transaction', item.classification, item.statement.sql, result === undefined ? null : result.rowCount + result.changedRows, true);
+    const execute = async ():Promise<readonly DatabaseQueryResult[]> => {
+      try {
+        const results = await this.withAdapter(project, (adapter) => adapter.transaction(requests));
+        for (let index = 0; index < classified.length; index += 1) {
+          const item = classified[index]; const result = results[index];
+          if (item !== undefined) this.audit(projectId, 'transaction', item.classification, item.statement.sql, result === undefined ? null : result.rowCount + result.changedRows, true);
+        }
+        return results;
+      } catch (error) {
+        for (const item of classified) this.audit(projectId, 'transaction', item.classification, item.statement.sql, null, false, error);
+        throw error;
       }
-      return results;
-    } catch (error) {
-      for (const item of classified) this.audit(projectId, 'transaction', item.classification, item.statement.sql, null, false, error);
-      throw error;
-    }
+    };
+    if(strongest!=='WRITE')return execute();
+    return this.guardedWrite(projectId,'transaction',idempotencyKey,idempotencyFingerprint(statements),execute);
+  }
+
+  private async guardedWrite<T>(projectId:string,operation:string,key:string|undefined,fingerprint:string,run:()=>Promise<T>):Promise<T>{
+    const store=this.mutationSafety.idempotency;
+    if(store===undefined)return run();
+    if(key===undefined||key.trim()==='')throw new ValidationError('idempotency_key is required for database writes');
+    const scope=`database-write:${projectId}:${operation}`;
+    const replay=store.requireReplayable(scope,key,fingerprint);
+    if(replay!==null)return replay.result as T;
+    store.begin(scope,key,fingerprint);
+    const owner=`${this.mutationOwner}:${operation}:${key}`;
+    let lease=false;
+    try{
+      if(this.mutationSafety.leases!==undefined){this.mutationSafety.leases.acquire(projectId,`database:${operation}`,owner,this.mutationSafety.leaseTtlMs??Math.max(10_000,this.options.timeoutMs+5_000));lease=true;}
+      const result=await run();store.complete(scope,key,result);return result;
+    }catch(error){const current=store.get(scope,key);if(current?.status==='IN_PROGRESS')store.fail(scope,key,redactError(error));throw error;}
+    finally{if(lease)this.mutationSafety.leases?.release(projectId,owner);}
   }
 
   private requireCapability(projectId: string, principal: Principal, classification: DatabaseQueryClassification): ProjectRecord {
