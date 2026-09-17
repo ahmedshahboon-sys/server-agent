@@ -32,8 +32,8 @@ test('task state machine rejects invalid and terminal transitions', () => {
   finally{db.close();}
 });
 
-test('interrupted task states become RECOVERY_REQUIRED after restart reconciliation', () => {
+test('interrupted task states become RECOVERY_REQUIRED and cannot resume before assessment', () => {
   const db=new SqliteDatabase(':memory:'); const registry=new ProjectRegistry(db); registry.create(projectFixture()); const engine=new TaskEngine(db);
-  try { const task=engine.create('project-a','Crash test'); engine.resume(task.taskId); assert.equal(engine.markInterruptedForRecovery(),1); assert.equal(engine.get(task.taskId)?.status,'RECOVERY_REQUIRED'); assert.equal(engine.resume(task.taskId).recoveryAttempts,1); }
+  try { const task=engine.create('project-a','Crash test'); engine.resume(task.taskId); assert.equal(engine.markInterruptedForRecovery(),1); assert.equal(engine.get(task.taskId)?.status,'RECOVERY_REQUIRED'); assert.throws(()=>engine.resume(task.taskId),ConflictError); assert.equal(engine.get(task.taskId)?.recoveryAttempts,0); }
   finally { db.close(); }
 });
