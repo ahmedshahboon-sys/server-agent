@@ -5,9 +5,32 @@ import type { DatabaseMigrationStatus, DatabaseQueryRequest, DatabaseQueryResult
 interface WorkerInput { readonly filename:string; readonly operation:'status'|'schema'|'query'|'transaction'|'migration'; readonly timeoutMs:number; readonly maxRows?:number; readonly request?:DatabaseQueryRequest; readonly requests?:readonly DatabaseQueryRequest[]; }
 
 function objectRow(row:unknown):Readonly<Record<string,unknown>>{return row!==null&&typeof row==='object'?{...(row as Record<string,unknown>)}:{value:row};}
-function limitRows(rows:readonly Readonly<Record<string,unknown>>[],maxRows:number,maxBytes:number):{rows:readonly Readonly<Record<string,unknown>>[];truncated:boolean}{const output:Readonly<Record<string,unknown>>[]=[];let bytes=2,truncated=false;for(const row of rows){if(output.length>=maxRows){truncated=true;break;}const encoded=JSON.stringify(row);const rowBytes=Buffer.byteLength(encoded,'utf8')+(output.length===0?0:1);if(bytes+rowBytes>maxBytes){truncated=true;break;}output.push(row);bytes+=rowBytes;}if(output.length<rows.length)truncated=true;return{rows:output,truncated};}
-function runQuery(db:DatabaseSync,request:DatabaseQueryRequest):DatabaseQueryResult{const statement=db.prepare(request.sql);if(request.classification==='READ'){const rows=statement.all(...(request.params??[])).map(objectRow);const bounded=limitRows(rows,request.maxRows,request.maxBytes);return{rows:bounded.rows,rowCount:bounded.rows.length,changedRows:0,truncated:bounded.truncated};}const result=statement.run(...(request.params??[]));return{rows:[],rowCount:0,changedRows:Number(result.changes),truncated:false};}
-function migrationStatus(db:DatabaseSync):DatabaseMigrationStatus{const tables=new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]).map((row)=>row.name));if(tables.has('_prisma_migrations')){const row=db.prepare('SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY finished_at DESC LIMIT 1').get() as {migration_name?:string}|undefined;return{known:true,system:'prisma',current:row?.migration_name??null,pending:null,details:{}};}if(tables.has('SequelizeMeta')){const row=db.prepare('SELECT name FROM SequelizeMeta ORDER BY name DESC LIMIT 1').get() as {name?:string}|undefined;return{known:true,system:'sequelize',current:row?.name??null,pending:null,details:{}};}if(tables.has('knex_migrations')){const row=db.prepare('SELECT name,batch FROM knex_migrations ORDER BY id DESC LIMIT 1').get() as {name?:string;batch?:number}|undefined;return{known:true,system:'knex',current:row?.name??null,pending:null,details:row?.batch===undefined?{}:{batch:row.batch}};}if(tables.has('schema_migrations')){const row=db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get() as {version?:string|number|null}|undefined;return{known:true,system:'schema_migrations',current:row?.version===null||row?.version===undefined?null:String(row.version),pending:null,details:{}};}return{known:false,system:null,current:null,pending:null,details:{}};}
+
+function readBoundedRows(db:DatabaseSync,request:DatabaseQueryRequest):DatabaseQueryResult{
+  const statement=db.prepare(request.sql);
+  const rows:Readonly<Record<string,unknown>>[]=[];
+  let bytes=2;
+  let truncated=false;
+  for(const rawRow of statement.iterate(...(request.params??[]))){
+    if(rows.length>=request.maxRows){truncated=true;break;}
+    const row=objectRow(rawRow);
+    const encoded=JSON.stringify(row);
+    const rowBytes=Buffer.byteLength(encoded,'utf8')+(rows.length===0?0:1);
+    if(bytes+rowBytes>request.maxBytes){truncated=true;break;}
+    rows.push(row);
+    bytes+=rowBytes;
+  }
+  return{rows,rowCount:rows.length,changedRows:0,truncated};
+}
+
+function runQuery(db:DatabaseSync,request:DatabaseQueryRequest):DatabaseQueryResult{
+  if(request.classification==='READ')return readBoundedRows(db,request);
+  const statement=db.prepare(request.sql);
+  const result=statement.run(...(request.params??[]));
+  return{rows:[],rowCount:0,changedRows:Number(result.changes),truncated:false};
+}
+
+function migrationStatus(db:DatabaseSync):DatabaseMigrationStatus{const tables=new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]).map((row)=>row.name));if(tables.has('_prisma_migrations')){const row=db.prepare('SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY finished_at DESC LIMIT 1').get() as {migration_name?:string}|undefined;return{known:true,system:'prisma',current:row?.migration_name??null,pending:null,details:{}};}if(tables.has('SequelizeMeta')){const row=db.prepare('SELECT name FROM SequelizeMeta ORDER BY name DESC LIMIT 1').get() as {name?:string}|undefined;return{known:true,system:'sequelize',current:row?.name??null,pending:null,details:row?.batch===undefined?{}:{batch:row.batch}};}if(tables.has('knex_migrations')){const row=db.prepare('SELECT name,batch FROM knex_migrations ORDER BY id DESC LIMIT 1').get() as {name?:string;batch?:number}|undefined;return{known:true,system:'knex',current:row?.name??null,pending:null,details:row?.batch===undefined?{}:{batch:row.batch}};}if(tables.has('schema_migrations')){const row=db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get() as {version?:string|number|null}|undefined;return{known:true,system:'schema_migrations',current:row?.version===null||row?.version===undefined?null:String(row.version),pending:null,details:{}};}return{known:false,system:null,current:null,pending:null,details:{}};}
 
 const input=workerData as WorkerInput;const started=Date.now();const db=new DatabaseSync(input.filename);db.exec('PRAGMA foreign_keys = ON;');db.exec(`PRAGMA busy_timeout = ${Math.min(input.timeoutMs,60_000)};`);
 try{
