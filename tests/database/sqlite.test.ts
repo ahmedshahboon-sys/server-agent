@@ -7,8 +7,8 @@ describe('SqliteDatabase', () => {
     const db = new SqliteDatabase(':memory:');
     try {
       const versions = db.raw.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
-      assert.deepEqual(versions.map((row) => ({ ...row })), [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
-      assert.doesNotThrow(() => db.raw.exec('SELECT * FROM projects;'));
+      assert.deepEqual(versions.map((row) => ({ ...row })), [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
+      assert.doesNotThrow(() => db.raw.exec('SELECT archived_at FROM projects;'));
       assert.doesNotThrow(() => db.raw.exec('SELECT * FROM tasks; SELECT * FROM jobs; SELECT * FROM idempotency_keys; SELECT * FROM deployments; SELECT * FROM health_checks; SELECT * FROM database_audit; SELECT * FROM recovery_runs; SELECT * FROM rollback_plans; SELECT * FROM mcp_audit;'));
     } finally { db.close(); }
   });

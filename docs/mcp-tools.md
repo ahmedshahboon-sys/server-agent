@@ -36,16 +36,20 @@ Bearer authentication identifies a remote principal. It does not bypass authoriz
 - `register_project`
 - `update_project`
 - `disable_project`
-- `remove_project` — removes registry metadata only; never deletes project files
+- `remove_project` — archives the registry entry (tombstone) so historical task/job/deployment foreign keys remain valid; project files are never deleted
+
+Archived projects disappear from normal project lookups/lists and their IDs are not silently reusable.
 
 ### Files
 
 - `list_files`
-- `read_file`
+- `read_file` — returns `content` plus a SHA-256 version
 - `search_files`
-- `write_file`
-- `edit_file`
+- `write_file` — same-directory temporary file + sync + atomic rename
+- `edit_file` — requires the SHA-256 returned by the prior read and refuses stale edits
 - `delete_file`
+
+Sensitive credential/config paths are denied by default, including common environment, SSH, package-manager, cloud, Docker, Kubernetes, and Terraform credential/state locations.
 
 ### Git
 
@@ -55,7 +59,7 @@ Bearer authentication identifies a remote principal. It does not bypass authoriz
 - `git_branch`
 - `git_commit`
 
-No reset-hard, clean, force checkout, force push, or generic Git argv tool is exposed.
+`git_commit` requires 1-256 explicit project paths and commits only those paths; unrelated pre-staged changes are excluded. No reset-hard, clean, force checkout, force push, or generic Git argv tool is exposed.
 
 ### Commands, Jobs, validation
 
@@ -85,7 +89,7 @@ Arbitrary shell strings/argv are not accepted. The Job tools let the client reco
 - `database_transaction`
 - `database_migration_status`
 
-Destructive SQL is blocked from the normal interface. Write classification still requires explicit write authorization inside the database service even though the generic query tool is visible to read-authorized callers.
+Destructive SQL is blocked from the normal interface. SQLite read queries are iterated under row/byte bounds so a large result is not materialized before limits are applied. Write classification still requires explicit write authorization inside the database service even though the generic query tool is visible to read-authorized callers.
 
 ### Deployment / health / services / logs
 

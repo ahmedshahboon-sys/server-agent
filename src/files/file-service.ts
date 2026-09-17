@@ -1,8 +1,9 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Authorizer, ProjectStore } from '../core/interfaces.js';
 import type { Principal } from '../core/types.js';
-import { AuthorizationError, ValidationError } from '../core/errors.js';
+import { AuthorizationError, ConflictError, ValidationError } from '../core/errors.js';
 import { ProjectPathSandbox } from '../security/sandbox.js';
 
 export interface FileServiceOptions {
@@ -17,13 +18,22 @@ export interface FileEntry {
   readonly size: number;
 }
 
+export interface FileSnapshot {
+  readonly content: string;
+  readonly sha256: string;
+}
+
 export interface SearchMatch {
   readonly path: string;
   readonly line: number;
   readonly text: string;
 }
 
+function digest(content: string): string { return createHash('sha256').update(content, 'utf8').digest('hex'); }
+
 export class ProjectFileService {
+  private readonly writeLocks = new Map<string, Promise<void>>();
+
   public constructor(
     private readonly projects: ProjectStore,
     private readonly authorizer: Authorizer,
@@ -55,19 +65,20 @@ export class ProjectFileService {
     this.authorizer.assertAllowed(principal, 'files:read', projectId);
     const sandbox = await this.sandbox(projectId, 'files:read');
     const resolved = await sandbox.resolveForRead(relativePath);
-    const stat = await fs.stat(resolved);
-    if (!stat.isFile()) throw new ValidationError('Requested path is not a file');
-    if (stat.size > this.options.maxFileBytes) throw new ValidationError('File exceeds configured read limit');
-    return fs.readFile(resolved, 'utf8');
+    return this.readResolved(resolved);
+  }
+
+  public async readFileSnapshot(projectId: string, principal: Principal, relativePath: string): Promise<FileSnapshot> {
+    const content = await this.readFile(projectId, principal, relativePath);
+    return { content, sha256: digest(content) };
   }
 
   public async writeFile(projectId: string, principal: Principal, relativePath: string, content: string): Promise<void> {
     this.authorizer.assertAllowed(principal, 'files:write', projectId);
-    if (Buffer.byteLength(content) > this.options.maxFileBytes) throw new ValidationError('File exceeds configured write limit');
+    this.assertContentSize(content);
     const sandbox = await this.sandbox(projectId, 'files:write');
     const resolved = await sandbox.resolveForWrite(relativePath);
-    await fs.mkdir(path.dirname(resolved), { recursive: true, mode: 0o750 });
-    await fs.writeFile(resolved, content, { encoding: 'utf8', mode: 0o640 });
+    await this.withWriteLock(resolved, () => this.atomicWrite(resolved, content));
   }
 
   public async editFile(
@@ -76,24 +87,37 @@ export class ProjectFileService {
     relativePath: string,
     expected: string,
     replacement: string,
+    expectedSha256: string,
   ): Promise<void> {
     if (expected.length === 0) throw new ValidationError('Edit expected text must not be empty');
+    if (!/^[a-f0-9]{64}$/i.test(expectedSha256)) throw new ValidationError('Edit expected_sha256 must be a SHA-256 hex digest');
     this.authorizer.assertAllowed(principal, 'files:read', projectId);
     this.authorizer.assertAllowed(principal, 'files:write', projectId);
-    const current = await this.readFile(projectId, principal, relativePath);
-    const first = current.indexOf(expected);
-    if (first < 0) throw new ValidationError('Expected text was not found');
-    if (current.indexOf(expected, first + expected.length) >= 0) throw new ValidationError('Expected text is not unique');
-    await this.writeFile(projectId, principal, relativePath, `${current.slice(0, first)}${replacement}${current.slice(first + expected.length)}`);
+    const sandbox = await this.sandbox(projectId, 'files:write');
+    const resolved = await sandbox.resolveForRead(relativePath);
+    await this.withWriteLock(resolved, async () => {
+      const current = await this.readResolved(resolved);
+      const currentHash = digest(current);
+      if (currentHash !== expectedSha256.toLowerCase()) throw new ConflictError('File changed since it was read');
+      const first = current.indexOf(expected);
+      if (first < 0) throw new ValidationError('Expected text was not found');
+      if (current.indexOf(expected, first + expected.length) >= 0) throw new ValidationError('Expected text is not unique');
+      const next = `${current.slice(0, first)}${replacement}${current.slice(first + expected.length)}`;
+      this.assertContentSize(next);
+      await this.atomicWrite(resolved, next, currentHash);
+    });
   }
 
   public async deleteFile(projectId: string, principal: Principal, relativePath: string): Promise<void> {
     this.authorizer.assertAllowed(principal, 'files:write', projectId);
     const sandbox = await this.sandbox(projectId, 'files:write');
     const resolved = await sandbox.resolveForRead(relativePath);
-    const stat = await fs.lstat(resolved);
-    if (!stat.isFile()) throw new ValidationError('Only regular files can be deleted');
-    await fs.unlink(resolved);
+    await this.withWriteLock(resolved, async () => {
+      const stat = await fs.lstat(resolved);
+      if (!stat.isFile()) throw new ValidationError('Only regular files can be deleted');
+      await fs.unlink(resolved);
+      await this.syncDirectory(path.dirname(resolved));
+    });
   }
 
   public async searchFiles(projectId: string, principal: Principal, query: string): Promise<readonly SearchMatch[]> {
@@ -131,6 +155,70 @@ export class ProjectFileService {
       });
     }
     return results;
+  }
+
+  private async readResolved(resolved: string): Promise<string> {
+    const stat = await fs.stat(resolved);
+    if (!stat.isFile()) throw new ValidationError('Requested path is not a file');
+    if (stat.size > this.options.maxFileBytes) throw new ValidationError('File exceeds configured read limit');
+    return fs.readFile(resolved, 'utf8');
+  }
+
+  private assertContentSize(content: string): void {
+    if (Buffer.byteLength(content) > this.options.maxFileBytes) throw new ValidationError('File exceeds configured write limit');
+  }
+
+  private async atomicWrite(resolved: string, content: string, expectedCurrentHash?: string): Promise<void> {
+    const directory = path.dirname(resolved);
+    await fs.mkdir(directory, { recursive: true, mode: 0o750 });
+    const tempPath = path.join(directory, `.${path.basename(resolved)}.server-agent-${randomUUID()}.tmp`);
+    let tempExists = false;
+    try {
+      const handle = await fs.open(tempPath, 'wx', 0o640);
+      tempExists = true;
+      try {
+        await handle.writeFile(content, { encoding: 'utf8' });
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (expectedCurrentHash !== undefined) {
+        const latest = await this.readResolved(resolved);
+        if (digest(latest) !== expectedCurrentHash) throw new ConflictError('File changed during edit');
+      }
+      await fs.rename(tempPath, resolved);
+      tempExists = false;
+      await this.syncDirectory(directory);
+    } finally {
+      if (tempExists) await fs.unlink(tempPath).catch(() => undefined);
+    }
+  }
+
+  private async syncDirectory(directory: string): Promise<void> {
+    let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+    try {
+      handle = await fs.open(directory, 'r');
+      await handle.sync();
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error ? String(error.code) : '';
+      if (!['EINVAL', 'ENOTSUP', 'EBADF'].includes(code)) throw error;
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
+
+  private async withWriteLock<T>(resolved: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.writeLocks.get(resolved) ?? Promise.resolve();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const current = previous.then(() => gate);
+    this.writeLocks.set(resolved, current);
+    await previous;
+    try { return await operation(); }
+    finally {
+      release?.();
+      if (this.writeLocks.get(resolved) === current) this.writeLocks.delete(resolved);
+    }
   }
 
   private async sandbox(projectId: string, permission: 'files:read' | 'files:write'): Promise<ProjectPathSandbox> {

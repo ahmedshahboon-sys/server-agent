@@ -119,7 +119,6 @@ const BASE_MIGRATIONS = [
       );
     `,
   },
-
   {
     version: 3,
     sql: `
@@ -178,7 +177,6 @@ const BASE_MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_database_audit_project_time ON database_audit(project_id, created_at);
     `,
   },
-
   {
     version: 4,
     sql: `
@@ -237,6 +235,13 @@ const BASE_MIGRATIONS = [
       );
       CREATE INDEX IF NOT EXISTS idx_mcp_audit_time ON mcp_audit(created_at);
       CREATE INDEX IF NOT EXISTS idx_mcp_audit_principal ON mcp_audit(principal_id, created_at);
+    `,
+  },
+  {
+    version: 5,
+    sql: `
+      ALTER TABLE projects ADD COLUMN archived_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects(archived_at);
     `,
   },
 ] as const;
