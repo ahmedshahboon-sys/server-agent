@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,8 @@ import { GitService } from '../git/git-service.js';
 import { RestrictedCommandRunner } from '../commands/command-runner.js';
 import { JobManager } from '../jobs/job-manager.js';
 import { TaskEngine } from '../tasks/task-engine.js';
+import { IdempotencyStore } from '../idempotency/idempotency.js';
+import { OperationLeaseStore } from '../operations/operation-lease.js';
 import { LocalValidationPipeline } from '../validation/local-ci.js';
 import { SystemdServiceController, ProjectServiceManager } from '../services/service-controller.js';
 import { JournalLogReader } from '../logs/journal-logs.js';
@@ -50,18 +53,23 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
 
   const logger = new StructuredLogger(config.logLevel);
   const db = new SqliteDatabase(config.dbPath);
+  const runtimeInstanceId=randomUUID();
+  const idempotency=new IdempotencyStore(db);
+  const leases=new OperationLeaseStore(db);
+  const reclaimedLeases=leases.reclaimExpired();
   const projects = new ProjectRegistry(db);
   const authorizer = new DefaultDenyAuthorizer();
   const files = new ProjectFileService(projects, authorizer, { maxFileBytes: config.maxFileBytes });
   const runner = new RestrictedCommandRunner(projects, authorizer, { timeoutMs: config.commandTimeoutMs, maxOutputBytes: config.maxCommandOutputBytes, environment: env });
-  const jobs = new JobManager(db, runner, config.dataDir, config.maxConcurrentJobs);
   const tasks = new TaskEngine(db);
+  const jobs = new JobManager(db,runner,config.dataDir,config.maxConcurrentJobs,{instanceId:runtimeInstanceId,idempotency,leases,leaseTtlMs:config.commandTimeoutMs+5_000});
+  tasks.bindJobController(jobs);
   const git = new GitService(projects, authorizer, { timeoutMs: config.commandTimeoutMs, maxOutputBytes: config.maxCommandOutputBytes, environment: env });
   const validation = new LocalValidationPipeline(db, projects, runner, config.maxFixAttempts);
   const databaseFactory = new ProjectDatabaseAdapterFactory();
-  const database = new DatabaseService(db, projects, authorizer, databaseFactory, { timeoutMs: config.databaseQueryTimeoutMs, maxRows: config.databaseMaxRows, maxResultBytes: config.databaseMaxResultBytes });
+  const database = new DatabaseService(db, projects, authorizer, databaseFactory, { timeoutMs: config.databaseQueryTimeoutMs, maxRows: config.databaseMaxRows, maxResultBytes: config.databaseMaxResultBytes },{idempotency,leases,ownerId:runtimeInstanceId,leaseTtlMs:config.databaseQueryTimeoutMs+5_000});
   const serviceController = new SystemdServiceController(env);
-  const services = new ProjectServiceManager(projects, authorizer, serviceController);
+  const services = new ProjectServiceManager(projects,authorizer,serviceController,{idempotency,leases,ownerId:runtimeInstanceId,leaseTtlMs:60_000});
   const logs = new JournalLogReader(projects, authorizer, env, config.maxLogOutputBytes);
   const health = new HealthCheckService(db, projects, authorizer, serviceController, new FetchHttpProbe(), databaseFactory);
   const deployments = new DeploymentEngine(db, projects, authorizer, git, runner, validation, tasks, health, serviceController, databaseFactory);
@@ -71,7 +79,7 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
 
   const interruptedTasks = tasks.markInterruptedForRecovery();
   const reconciledJobs = jobs.reconcileAfterRestart();
-  if (interruptedTasks > 0 || reconciledJobs > 0) logger.warn('Recovered interrupted runtime state', { interruptedTasks, reconciledJobs });
+  if (interruptedTasks > 0 || reconciledJobs > 0 || reclaimedLeases > 0) logger.warn('Recovered interrupted runtime state', { interruptedTasks, reconciledJobs, reclaimedLeases });
 
   const server = createServerAgentMcpServer({
     authorizer,
