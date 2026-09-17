@@ -25,8 +25,8 @@ export class JobManager {
   private readonly controllers=new Map<string,AbortController>();
   private readonly active=new Map<string,Promise<void>>();
   private readonly instanceId:string;
-  private readonly idempotency?:IdempotencyStore;
-  private readonly leases?:OperationLeaseStore;
+  private readonly idempotency:IdempotencyStore|undefined;
+  private readonly leases:OperationLeaseStore|undefined;
   private readonly leaseTtlMs:number;
 
   public constructor(private readonly db:SqliteDatabase,private readonly runner:RestrictedCommandRunner,private readonly outputDir:string,private readonly maxConcurrentJobs=1,options:JobManagerOptions={}){
