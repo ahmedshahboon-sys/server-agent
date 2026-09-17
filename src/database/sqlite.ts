@@ -244,6 +244,29 @@ const BASE_MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects(archived_at);
     `,
   },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE IF NOT EXISTS persistent_operations (
+        operation_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        operation_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        target_id TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        result_json TEXT,
+        error_json TEXT,
+        FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+        FOREIGN KEY(project_id) REFERENCES projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_persistent_operations_project_time ON persistent_operations(project_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_persistent_operations_task_time ON persistent_operations(task_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_persistent_operations_status ON persistent_operations(status);
+    `,
+  },
 ] as const;
 
 export class SqliteDatabase {
@@ -270,6 +293,7 @@ export class SqliteDatabase {
         this.raw.exec(migration.sql);
         insert.run(migration.version, new Date().toISOString());
       }
+      this.db.raw?.exec?.('');
       this.raw.exec('COMMIT;');
     } catch (error) {
       this.raw.exec('ROLLBACK;');
