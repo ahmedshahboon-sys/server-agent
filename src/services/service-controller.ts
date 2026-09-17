@@ -1,7 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import type { Authorizer, ProjectStore } from '../core/interfaces.js';
 import type { Principal } from '../core/types.js';
 import { AuthorizationError, ValidationError } from '../core/errors.js';
 import { executeArgv } from '../commands/process-executor.js';
+import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
+import { OperationLeaseStore } from '../operations/operation-lease.js';
+import { redactError } from '../security/redaction.js';
 
 export interface ServiceSnapshot {
   readonly active: boolean;
@@ -39,8 +43,16 @@ export class SystemdServiceController implements ServiceController {
   }
 }
 
+export interface ServiceMutationSafety {
+  readonly idempotency?: IdempotencyStore;
+  readonly leases?: OperationLeaseStore;
+  readonly ownerId?: string;
+  readonly leaseTtlMs?: number;
+}
+
 export class ProjectServiceManager {
-  public constructor(private readonly projects: ProjectStore, private readonly authorizer: Authorizer, private readonly controller: ServiceController) {}
+  private readonly mutationOwner:string;
+  public constructor(private readonly projects: ProjectStore, private readonly authorizer: Authorizer, private readonly controller: ServiceController, private readonly mutationSafety:ServiceMutationSafety={}) { this.mutationOwner=mutationSafety.ownerId??randomUUID(); }
 
   public async status(projectId: string, principal: Principal): Promise<ServiceSnapshot> {
     this.authorizer.assertAllowed(principal, 'service:read', projectId);
@@ -51,12 +63,23 @@ export class ProjectServiceManager {
     return this.controller.status(project.serviceName);
   }
 
-  public async restart(projectId: string, principal: Principal): Promise<void> {
+  public async restart(projectId: string, principal: Principal, idempotencyKey?:string): Promise<void> {
     this.authorizer.assertAllowed(principal, 'service:restart', projectId);
     const project = this.projects.get(projectId);
     if (project === null || !project.enabled) throw new ValidationError('Project is not available');
     if (!project.permissions.includes('service:restart')) throw new AuthorizationError('Project does not permit service restart');
     if (project.serviceName === undefined) throw new ValidationError('Project has no service configured');
-    await this.controller.restart(project.serviceName);
+    const store=this.mutationSafety.idempotency;
+    if(store===undefined){await this.controller.restart(project.serviceName);return;}
+    if(idempotencyKey===undefined||idempotencyKey.trim()==='')throw new ValidationError('idempotency_key is required for service restart');
+    const scope=`service-restart:${projectId}`,fingerprint=idempotencyFingerprint({serviceName:project.serviceName});
+    const replay=store.requireReplayable(scope,idempotencyKey,fingerprint);if(replay!==null)return;
+    store.begin(scope,idempotencyKey,fingerprint);
+    const owner=`${this.mutationOwner}:restart:${idempotencyKey}`;let lease=false;
+    try{
+      if(this.mutationSafety.leases!==undefined){this.mutationSafety.leases.acquire(projectId,'service-restart',owner,this.mutationSafety.leaseTtlMs??60_000);lease=true;}
+      await this.controller.restart(project.serviceName);store.complete(scope,idempotencyKey,{ok:true,serviceName:project.serviceName});
+    }catch(error){const current=store.get(scope,idempotencyKey);if(current?.status==='IN_PROGRESS')store.fail(scope,idempotencyKey,redactError(error));throw error;}
+    finally{if(lease)this.mutationSafety.leases?.release(projectId,owner);}
   }
 }
