@@ -4,6 +4,7 @@ import { SqliteDatabase } from '../../src/database/sqlite.js';
 import { ProjectRegistry } from '../../src/projects/registry.js';
 import { DefaultDenyAuthorizer } from '../../src/security/authorization.js';
 import { AuthenticationError, AuthorizationError, CommandDeniedError } from '../../src/core/errors.js';
+import { currentIdempotencyKey } from '../../src/idempotency/context.js';
 import { StaticBearerAuthenticator } from '../../src/mcp/auth.js';
 import { McpToolRegistry } from '../../src/mcp/tool-registry.js';
 import { MCP_PROTOCOL_VERSION, McpHttpTransport } from '../../src/mcp/transport.js';
@@ -41,6 +42,22 @@ test('MCP registry denies cross-project access, audits denial, and redacts tool 
     assert.equal(result['apiToken'], '[REDACTED]');
     assert.deepEqual(result['nested'], { secret: '[REDACTED]' });
   } finally { db.close(); }
+});
+
+test('MCP tool calls propagate stable request idempotency context and explicit overrides', async () => {
+  const tools = new McpToolRegistry(authorizer);
+  tools.register({
+    definition: { name: 'idempotency_probe', description: 'idempotency context probe', inputSchema: { type: 'object' } },
+    permission: 'project:read',
+    handler: async () => ({ key: currentIdempotencyKey() ?? null }),
+  });
+  const principal = { id: 'remote-a', kind: 'remote' as const, projectScopes: ['project-a'], permissions: ['project:read'] as const };
+  const first = await tools.call('idempotency_probe', {}, { principal, requestId: 'request-42' }) as { key:string };
+  const replay = await tools.call('idempotency_probe', {}, { principal, requestId: 'request-42' }) as { key:string };
+  assert.equal(first.key, replay.key);
+  assert.match(first.key, /^req:[a-f0-9]{48}$/);
+  const explicit = await tools.call('idempotency_probe', { idempotency_key: 'explicit-key-1' }, { principal, requestId: 'request-43' }) as { key:string };
+  assert.equal(explicit.key, 'explicit-key-1');
 });
 
 test('MCP HTTP transport enforces Origin, auth, modern protocol metadata, and secret-safe responses', async () => {

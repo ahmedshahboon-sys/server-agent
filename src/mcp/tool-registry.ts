@@ -1,8 +1,9 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Authorizer } from '../core/interfaces.js';
 import type { Principal, ProjectPermission } from '../core/types.js';
 import { AuthorizationError, ValidationError } from '../core/errors.js';
 import type { SqliteDatabase } from '../database/sqlite.js';
+import { withIdempotencyKey } from '../idempotency/context.js';
 import { redactError, redactValue } from '../security/redaction.js';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
@@ -29,6 +30,12 @@ export interface ToolRegistration {
 }
 
 function requestIdText(value: string | number | null): string | null { return value === null ? null : String(value).slice(0, 128); }
+function derivedIdempotencyKey(context:ToolCallContext,args:Readonly<Record<string,unknown>>):string|undefined{
+  const explicit=args['idempotency_key'];
+  if(explicit!==undefined){if(typeof explicit!=='string'||explicit.trim()==='')throw new ValidationError('idempotency_key must be a non-empty string');return explicit;}
+  const request=requestIdText(context.requestId);if(request===null)return undefined;
+  return `req:${createHash('sha256').update(`${context.principal.id}\0${request}`).digest('hex').slice(0,48)}`;
+}
 
 export class McpToolRegistry {
   private readonly registrations = new Map<string, ToolRegistration>();
@@ -64,7 +71,8 @@ export class McpToolRegistry {
     try {
       if (registration.requiresGlobalScope === true && !context.principal.projectScopes.includes('*')) throw new AuthorizationError();
       this.authorizer.assertAllowed(context.principal, registration.permission, projectId);
-      const result = await registration.handler(args, context);
+      const key=derivedIdempotencyKey(context,args);
+      const result = await withIdempotencyKey(key,()=>registration.handler(args, context));
       this.audit(context, name, projectId, true, null);
       return redactValue(result);
     } catch (error) {

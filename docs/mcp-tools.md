@@ -1,6 +1,6 @@
 # Remote MCP boundary and tools
 
-Server Agent implements a stateless HTTP MCP boundary for protocol `2026-07-28`. Core services remain transport-independent; the MCP layer performs authentication, permission/scope checks, schema validation, redaction, and bounded response handling before/after calling them.
+Server Agent implements a stateless HTTP MCP boundary for protocol `2026-07-28`. Core services remain transport-independent; the MCP layer performs authentication, permission/scope checks, schema validation, redaction, idempotency context propagation, and bounded response handling before/after calling them.
 
 ## Request envelope
 
@@ -16,7 +16,7 @@ The Server Agent endpoint also requires `Authorization: Bearer <agent credential
 
 Supported protocol methods are `server/discover`, `tools/list`, and `tools/call`. Session ids are rejected because this implementation is intentionally stateless.
 
-## Authentication and authorization
+## Authentication, authorization, and repeat safety
 
 Bearer authentication identifies a remote principal. It does not bypass authorization. Every project operation remains constrained by:
 
@@ -26,6 +26,10 @@ Bearer authentication identifies a remote principal. It does not bypass authoriz
 4. operation-specific safety controls.
 
 `tools/list` is permission-filtered. Cross-project access is denied. Tool arguments are not stored in MCP audit rows.
+
+Each tool call also receives an idempotency context. If `idempotency_key` is supplied it is used after validation; otherwise Server Agent derives a stable opaque key from the authenticated principal and JSON-RPC request id. Protected mutations such as Job start, controlled database write/transaction, and service restart persist the key and input fingerprint. A completed duplicate reuses the stored result; an in-progress, failed, or same-key/different-input request fails closed rather than repeating the side effect.
+
+Protected mutations acquire a per-project durable lease. A second protected mutation for that project cannot overlap while the lease is active. Expired leases are reclaimed on startup; a crash does not cause Server Agent to assume the old mutation is harmlessly gone.
 
 ## Tool surface
 
@@ -63,14 +67,16 @@ Sensitive credential/config paths are denied by default, including common enviro
 
 ### Commands, Jobs, validation
 
-- `run_command` — starts a registered command as a persistent Job
-- `run_tests` — starts the registered test command as a persistent Job
+- `run_command` — starts a registered command as a persistent Job; optional `task_id` links it to a RUNNING Task
+- `run_tests` — starts the registered test command as a persistent Job; optional `task_id` links it to a RUNNING Task
 - `job_status`
 - `list_jobs`
 - `cancel_job`
 - `run_validation`
 
-Arbitrary shell strings/argv are not accepted. The Job tools let the client reconnect and inspect work without blindly rerunning it.
+Arbitrary shell strings/argv are not accepted. Job stdout/stderr is appended to bounded log files during execution only after secret redaction. The Job tools let the client reconnect and inspect work without blindly rerunning it.
+
+After Agent restart, previously persisted `RUNNING` Jobs become `UNKNOWN` regardless of whether their stored PID currently exists. The PID may belong to a surviving child or may have been reused; Server Agent therefore does not attach to or kill it automatically.
 
 ### Tasks
 
@@ -81,6 +87,8 @@ Arbitrary shell strings/argv are not accepted. The Job tools let the client reco
 - `pause_task`
 - `cancel_task`
 
+Task transitions are compare-and-set guarded. A Task with a running linked Job cannot be paused. Cancelling it cancels and waits for that Job before the Task itself becomes `CANCELLED`.
+
 ### Database
 
 - `database_status`
@@ -89,7 +97,7 @@ Arbitrary shell strings/argv are not accepted. The Job tools let the client reco
 - `database_transaction`
 - `database_migration_status`
 
-Destructive SQL is blocked from the normal interface. SQLite read queries are iterated under row/byte bounds so a large result is not materialized before limits are applied. Write classification still requires explicit write authorization inside the database service even though the generic query tool is visible to read-authorized callers.
+Destructive SQL is blocked from the normal interface. SQLite read queries are iterated under row/byte bounds so a large result is not materialized before limits are applied. Write classification still requires explicit write authorization inside the database service even though the generic query tool is visible to read-authorized callers. Controlled writes and write-containing transactions use idempotency + per-project mutation leases when invoked through the hardened runtime.
 
 ### Deployment / health / services / logs
 
@@ -100,7 +108,9 @@ Destructive SQL is blocked from the normal interface. SQLite read queries are it
 - `service_status`
 - `service_restart`
 
-Host-level service restart may remain unavailable until a deliberately narrow Linux authorization policy exists; the installer does not grant it automatically.
+Project service restart is idempotent and lease-guarded in the hardened runtime. Host-level service restart may remain unavailable until a deliberately narrow Linux authorization policy exists; the installer does not grant it automatically.
+
+Deployment and validation themselves are still synchronous orchestration in this group; their conversion to persistent Operations belongs to the next hardening group.
 
 ### Recovery / rollback
 
@@ -110,7 +120,7 @@ Host-level service restart may remain unavailable until a deliberately narrow Li
 - `rollback_status`
 - `rollback_execute`
 
-Recovery is evidence-driven and bounded. Rollback execution requires a previously READY plan and immediate revalidation.
+Recovery is evidence-driven and bounded. Rollback execution requires a previously READY plan and immediate revalidation. Persistent operation conversion for deployment/validation/rollback is intentionally deferred to the next hardening group.
 
 ### Diagnostics
 

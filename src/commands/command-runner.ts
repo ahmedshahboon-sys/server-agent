@@ -19,6 +19,8 @@ export interface RestrictedCommandOptions {
 export interface CommandRunHooks {
   readonly signal?: AbortSignal;
   readonly onSpawn?: (pid: number | undefined) => void;
+  readonly onStdout?: (chunk: string) => void;
+  readonly onStderr?: (chunk: string) => void;
 }
 
 function configuredArgv(project: ProjectRecord, commandId: string): readonly string[] | undefined {
@@ -44,7 +46,6 @@ export class RestrictedCommandRunner {
     private readonly options: RestrictedCommandOptions,
   ) {}
 
-
   public async runRollback(projectId: string, principal: Principal, targetCommit: string): Promise<ProcessExecutionResult> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(targetCommit)) throw new ValidationError('Rollback target must be a full Git commit SHA');
     this.authorizer.assertAllowed(principal, 'commands:run', projectId);
@@ -65,7 +66,6 @@ export class RestrictedCommandRunner {
     if (!project.permissions.includes('commands:run')) throw new AuthorizationError('Project does not permit command execution');
     const argv = configuredArgv(project, commandId);
     if (argv === undefined || argv.length === 0) throw new CommandDeniedError(`Command ${commandId} is not configured`);
-
     return this.executeConfigured(project, argv, hooks);
   }
 
@@ -91,6 +91,8 @@ export class RestrictedCommandRunner {
       secretValues,
       ...(hooks.signal === undefined ? {} : { signal: hooks.signal }),
       ...(hooks.onSpawn === undefined ? {} : { onSpawn: hooks.onSpawn }),
+      ...(hooks.onStdout === undefined ? {} : { onStdout: hooks.onStdout }),
+      ...(hooks.onStderr === undefined ? {} : { onStderr: hooks.onStderr }),
     });
   }
 }
