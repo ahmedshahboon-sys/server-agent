@@ -9,7 +9,7 @@ type Row = {
   id: string; name: string; root: string; enabled: number; runtime: ProjectRecord['runtime'];
   service_name: string | null; domain: string | null; ports_json: string; health_json: string;
   commands_json: string; database_json: string; deployment_json: string; permissions_json: string; environment_refs_json: string;
-  metadata_json: string; created_at: string; updated_at: string;
+  metadata_json: string; archived_at: string | null; created_at: string; updated_at: string;
 };
 
 function parseJson<T>(value: string): T { return JSON.parse(value) as T; }
@@ -40,29 +40,29 @@ export class ProjectRegistry implements ProjectStore {
   public constructor(private readonly db: SqliteDatabase, private readonly clock: Clock = new SystemClock()) {}
 
   public list(): readonly ProjectRecord[] {
-    return (this.db.raw.prepare('SELECT * FROM projects ORDER BY id').all() as Row[]).map(mapRow);
+    return (this.db.raw.prepare('SELECT * FROM projects WHERE archived_at IS NULL ORDER BY id').all() as Row[]).map(mapRow);
   }
 
   public get(projectId: string): ProjectRecord | null {
-    const row = this.db.raw.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Row | undefined;
+    const row = this.db.raw.prepare('SELECT * FROM projects WHERE id = ? AND archived_at IS NULL').get(projectId) as Row | undefined;
     return row === undefined ? null : mapRow(row);
   }
 
   public create(input: Omit<ProjectRecord, 'createdAt' | 'updatedAt'>): ProjectRecord {
     validateProjectInput(input);
-    if (this.get(input.id) !== null) throw new ValidationError(`Project ${input.id} already exists`);
+    if (this.getStored(input.id) !== null) throw new ValidationError(`Project ${input.id} already exists or is archived`);
     const timestamp = this.clock.now().toISOString();
     this.db.raw.prepare(`
       INSERT INTO projects (
         id, name, root, enabled, runtime, service_name, domain, ports_json, health_json,
         commands_json, database_json, deployment_json, permissions_json, environment_refs_json, metadata_json,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        archived_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id, input.name, input.root, input.enabled ? 1 : 0, input.runtime,
       input.serviceName ?? null, input.domain ?? null, JSON.stringify(input.ports), JSON.stringify(input.health),
       JSON.stringify(input.commands), JSON.stringify(input.database), JSON.stringify(input.deployment), JSON.stringify(input.permissions),
-      JSON.stringify(input.environmentRefs), JSON.stringify(input.metadata), timestamp, timestamp,
+      JSON.stringify(input.environmentRefs), JSON.stringify(input.metadata), null, timestamp, timestamp,
     );
     return this.getRequired(input.id);
   }
@@ -76,7 +76,7 @@ export class ProjectRegistry implements ProjectStore {
     this.db.raw.prepare(`
       UPDATE projects SET name=?, root=?, enabled=?, runtime=?, service_name=?, domain=?, ports_json=?, health_json=?,
         commands_json=?, database_json=?, deployment_json=?, permissions_json=?, environment_refs_json=?, metadata_json=?, updated_at=?
-      WHERE id=?
+      WHERE id=? AND archived_at IS NULL
     `).run(
       candidate.name, candidate.root, candidate.enabled ? 1 : 0, candidate.runtime,
       candidate.serviceName ?? null, candidate.domain ?? null, JSON.stringify(candidate.ports), JSON.stringify(candidate.health),
@@ -92,8 +92,15 @@ export class ProjectRegistry implements ProjectStore {
 
   public remove(projectId: string): void {
     this.getRequired(projectId);
-    const result = this.db.raw.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
-    if (Number(result.changes) !== 1) throw new ValidationError(`Project ${projectId} could not be removed`);
+    const timestamp = this.clock.now().toISOString();
+    const result = this.db.raw.prepare('UPDATE projects SET enabled=0, archived_at=?, updated_at=? WHERE id=? AND archived_at IS NULL')
+      .run(timestamp, timestamp, projectId);
+    if (Number(result.changes) !== 1) throw new ValidationError(`Project ${projectId} could not be archived`);
+  }
+
+  private getStored(projectId: string): Row | null {
+    const row = this.db.raw.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Row | undefined;
+    return row ?? null;
   }
 
   private getRequired(projectId: string): ProjectRecord {
