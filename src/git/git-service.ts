@@ -57,17 +57,16 @@ export class GitService {
     return this.read(projectId, principal, ['git', 'diff', '--name-only', `${baseCommit}..${headCommit}`, '--']);
   }
 
-  public async commit(projectId: string, principal: Principal, message: string, paths: readonly string[] = []): Promise<ProcessExecutionResult> {
+  public async commit(projectId: string, principal: Principal, message: string, paths: readonly string[]): Promise<ProcessExecutionResult> {
     this.authorizer.assertAllowed(principal, 'git:write', projectId);
     if (message.trim().length < 3 || message.length > 200) throw new ValidationError('Commit message must be 3-200 characters');
-    if (paths.length > 0) {
-      const project = this.projects.get(projectId);
-      if (project === null || !project.enabled) throw new ValidationError('Project is not available');
-      const sandbox = await ProjectPathSandbox.create(project.root);
-      for (const candidate of paths) await sandbox.resolveForRead(candidate);
-      await this.exec(projectId, ['git', 'add', '--', ...paths]);
-    }
-    return this.exec(projectId, ['git', '-c', 'core.hooksPath=/dev/null', 'commit', '-m', message]);
+    if (paths.length === 0 || paths.length > 256) throw new ValidationError('Git commit requires 1-256 explicit project paths');
+    const project = this.projects.get(projectId);
+    if (project === null || !project.enabled) throw new ValidationError('Project is not available');
+    const sandbox = await ProjectPathSandbox.create(project.root);
+    for (const candidate of paths) await sandbox.resolveForRead(candidate);
+    await this.exec(projectId, ['git', 'add', '--', ...paths]);
+    return this.exec(projectId, ['git', '-c', 'core.hooksPath=/dev/null', 'commit', '--only', '-m', message, '--', ...paths]);
   }
 
   private async read(projectId: string, principal: Principal, argv: readonly string[]): Promise<ProcessExecutionResult> {
