@@ -33,6 +33,18 @@ test('database service reads with row bounds and reports schema/migration status
   } finally {state.close();await temp.cleanup();}
 });
 
+test('sqlite read limits stop iteration before a huge result is materialized', async()=>{
+  const { SqliteProjectAdapter } = await import('../../src/database/sqlite-adapter.js');
+  const temp=await tempDir('server-agent-db-stream-');const appPath=path.join(temp.path,'stream.sqlite');const app=new DatabaseSync(appPath);app.exec('CREATE TABLE x(id INTEGER);');app.close();
+  const adapter=new SqliteProjectAdapter(appPath);
+  try{
+    const result=await adapter.query({sql:'WITH RECURSIVE cnt(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM cnt WHERE x<5000000) SELECT x FROM cnt',classification:'READ',timeoutMs:500,maxRows:1,maxBytes:1024});
+    assert.equal(result.rows.length,1);
+    assert.equal(result.rows[0]?.['x'],0);
+    assert.equal(result.truncated,true);
+  } finally {await adapter.close();await temp.cleanup();}
+});
+
 test('database service gates writes and blocks destructive statements', async()=>{
   const {temp,state,service}=await setup();
   try{
