@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { SqliteDatabase } from '../../src/database/sqlite.js';
 import { ProjectRegistry } from '../../src/projects/registry.js';
 import { TaskEngine } from '../../src/tasks/task-engine.js';
+import { ConflictError } from '../../src/core/errors.js';
 import { projectFixture } from '../helpers.js';
 
 test('tasks persist checkpoints and resume state', () => {
@@ -23,6 +24,12 @@ test('tasks persist checkpoints and resume state', () => {
     assert.equal(JSON.stringify(activity?.commandsExecuted).includes('never-store-me'),false);
     engine.pause(task.taskId); assert.equal(engine.resume(task.taskId).status,'RUNNING');
   } finally { db.close(); }
+});
+
+test('task state machine rejects invalid and terminal transitions', () => {
+  const db=new SqliteDatabase(':memory:');const registry=new ProjectRegistry(db);registry.create(projectFixture());const engine=new TaskEngine(db);
+  try{const task=engine.create('project-a','state machine');assert.throws(()=>engine.setStatus(task.taskId,'COMPLETED'),ConflictError);engine.resume(task.taskId);engine.setStatus(task.taskId,'COMPLETED');assert.throws(()=>engine.setStatus(task.taskId,'RUNNING'),ConflictError);assert.throws(()=>engine.recordError(task.taskId,new Error('late error')),ConflictError);}
+  finally{db.close();}
 });
 
 test('interrupted task states become RECOVERY_REQUIRED after restart reconciliation', () => {
