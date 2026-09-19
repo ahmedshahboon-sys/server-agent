@@ -32,6 +32,8 @@ import { loadOptionalRuntimeAuthentication } from './auth.js';
 import { AuthenticationStore } from '../security/auth-store.js';
 import { AuthenticationError } from '../core/errors.js';
 import { MaintenanceService } from '../maintenance/maintenance-service.js';
+import { loadOAuthConfig } from '../oauth/config.js';
+import { OAuthService } from '../oauth/oauth-service.js';
 
 const SERVER_VERSION = '0.5.0';
 
@@ -66,9 +68,11 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
     stateDbWarningBytes: config.stateDbWarningBytes,
   });
   const authStore = new AuthenticationStore(db);
+  const oauthConfig = loadOAuthConfig(env);
   const bootstrap = loadOptionalRuntimeAuthentication(env);
   if (bootstrap !== null) authStore.bootstrapCredential(bootstrap.principal, bootstrap.credentialId, bootstrap.token, bootstrap.expiresAt);
-  if (!authStore.hasUsableCredential()) { db.close(); throw new AuthenticationError('No usable MCP credential is configured'); }
+  if (!authStore.hasUsableCredential() && oauthConfig === null) { db.close(); throw new AuthenticationError('No usable MCP credential or OAuth provider is configured'); }
+  const oauth = oauthConfig === null ? undefined : new OAuthService(db, authStore, oauthConfig);
   const prunedAudit = authStore.pruneAudit(config.auditRetentionDays);
   const runtimeInstanceId=randomUUID();
   const idempotency=new IdempotencyStore(db);
@@ -112,9 +116,17 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
     stateDatabase: db,
     authenticator: new PersistentBearerAuthenticator(authStore, { attemptsPerMinute: config.authAttemptsPerMinute, requestsPerMinute: config.authRequestsPerMinute }),
     services: { projects, files, git, jobs, operations, validation, database, tasks, deployments, health, logs, services, recovery, rollback, maintenance },
-    transport: { path: config.mcpPath, maxBodyBytes: config.mcpMaxBodyBytes, allowedOrigins: config.mcpAllowedOrigins, serverName: 'server-agent', serverVersion: SERVER_VERSION },
+    transport: {
+      path: config.mcpPath,
+      maxBodyBytes: config.mcpMaxBodyBytes,
+      allowedOrigins: config.mcpAllowedOrigins,
+      serverName: 'server-agent',
+      serverVersion: SERVER_VERSION,
+      ...(oauth === undefined ? {} : { authChallenge: oauth.authorizationChallenge() }),
+    },
     mutationGuard: maintenance,
     health: maintenance,
+    ...(oauth === undefined ? {} : { oauth }),
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
@@ -138,7 +150,7 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
 
   try {
     await listen(server, config.mcpPort, config.mcpHost);
-    logger.info('Server Agent MCP listening', { host: config.mcpHost, port: config.mcpPort, path: config.mcpPath, credentialCount: authStore.listCredentials().length, auditRetentionDays: config.auditRetentionDays, prunedAuthEvents: prunedAudit.authEvents, prunedMcpEvents: prunedAudit.mcpEvents });
+    logger.info('Server Agent MCP listening', { host: config.mcpHost, port: config.mcpPort, path: config.mcpPath, oauthEnabled: oauth !== undefined, credentialCount: authStore.listCredentials().length, auditRetentionDays: config.auditRetentionDays, prunedAuthEvents: prunedAudit.authEvents, prunedMcpEvents: prunedAudit.mcpEvents });
   } catch (error) {
     db.close();
     throw error;

@@ -5,6 +5,7 @@ import type { McpAuthenticator } from './auth.js';
 import type { McpToolRegistry } from './tool-registry.js';
 import { safeRemoteError, safeRemoteValue } from './remote-response.js';
 import { MCP_TASKS_EXTENSION, type McpTasksExtension } from './tasks-extension.js';
+import type { OAuthService } from '../oauth/oauth-service.js';
 
 export const MCP_PROTOCOL_VERSION = '2026-07-28';
 const SERVER_INFO_KEY = 'io.modelcontextprotocol/serverInfo';
@@ -36,6 +37,7 @@ export interface McpTransportOptions {
   readonly allowedOrigins: readonly string[];
   readonly serverName?: string;
   readonly serverVersion?: string;
+  readonly authChallenge?: string;
 }
 
 type JsonRpcId = string | number | null;
@@ -116,7 +118,12 @@ export class McpHttpTransport {
     } catch (error) {
       const safe = safeRemoteError(error);
       const status = error instanceof RateLimitError ? 429 : error instanceof AuthenticationError ? 401 : 403;
-      return this.protocolError(null, status, safe.code, safe.message, safe.data);
+      const hasOAuthChallenge = error instanceof AuthenticationError && this.options.authChallenge !== undefined;
+      const extraHeaders = hasOAuthChallenge ? { 'www-authenticate': this.options.authChallenge! } : {};
+      const data = hasOAuthChallenge
+        ? { ...safe.data, _meta: { 'mcp/www_authenticate': [this.options.authChallenge!] } }
+        : safe.data;
+      return this.protocolError(null, status, safe.code, safe.message, data, extraHeaders);
     }
 
     let rpc: JsonRpcRequest;
@@ -191,8 +198,30 @@ export class McpHttpTransport {
     return { jsonrpc: '2.0', id, result: { ...result, _meta: { [SERVER_INFO_KEY]: this.serverInfo } } };
   }
 
-  private protocolError(id: JsonRpcId, status: number, code: number, message: string, data: Readonly<Record<string, unknown>> = {}): McpHttpResponse {
-    return json(status, { jsonrpc: '2.0', id, error: { code, message, data: safeRemoteValue(data) } });
+  private protocolError(
+    id: JsonRpcId,
+    status: number,
+    code: number,
+    message: string,
+    data: Readonly<Record<string, unknown>> = {},
+    extraHeaders: Readonly<Record<string, string>> = {},
+  ): McpHttpResponse {
+    let safeData = safeRemoteValue(data) as Readonly<Record<string, unknown>>;
+    const sourceMeta = data['_meta'];
+    if (
+      this.options.authChallenge !== undefined &&
+      sourceMeta !== null &&
+      typeof sourceMeta === 'object' &&
+      !Array.isArray(sourceMeta) &&
+      Array.isArray((sourceMeta as Record<string, unknown>)['mcp/www_authenticate'])
+    ) {
+      safeData = {
+        ...safeData,
+        _meta: { 'mcp/www_authenticate': [this.options.authChallenge] },
+      };
+    }
+    const base = json(status, { jsonrpc: '2.0', id, error: { code, message, data: safeData } });
+    return { ...base, headers: { ...base.headers, ...extraHeaders } };
   }
 }
 
@@ -219,7 +248,12 @@ function write(response: ServerResponse, result: McpHttpResponse): void {
   response.end(result.body);
 }
 
-export function createMcpNodeServer(transport: McpHttpTransport, maxBodyBytes: number, health?: NodeHealthProvider): Server {
+export function createMcpNodeServer(
+  transport: McpHttpTransport,
+  maxBodyBytes: number,
+  health?: NodeHealthProvider,
+  oauth?: OAuthService,
+): Server {
   return http.createServer(async (request, response) => {
     try {
       const requestPath=(request.url ?? '/').split('?')[0] ?? '/';
@@ -233,7 +267,16 @@ export function createMcpNodeServer(transport: McpHttpTransport, maxBodyBytes: n
         return;
       }
       const body = await readBody(request, maxBodyBytes);
-      const result = await transport.handle({ method: request.method ?? 'GET', path: request.url ?? '/', headers: headers(request), body, ...(request.socket.remoteAddress === undefined ? {} : { remoteAddress: request.socket.remoteAddress }) });
+      const requestHeaders = headers(request);
+      const remote = request.socket.remoteAddress === undefined ? {} : { remoteAddress: request.socket.remoteAddress };
+      if (oauth !== undefined) {
+        const oauthResult = oauth.handle({ method: request.method ?? 'GET', path: request.url ?? '/', headers: requestHeaders, body, ...remote });
+        if (oauthResult !== null) {
+          write(response, oauthResult);
+          return;
+        }
+      }
+      const result = await transport.handle({ method: request.method ?? 'GET', path: request.url ?? '/', headers: requestHeaders, body, ...remote });
       write(response, result);
     } catch (error) {
       const safe = safeRemoteError(error);
