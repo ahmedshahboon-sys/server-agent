@@ -94,8 +94,9 @@ export class PersistentBearerAuthenticator implements McpAuthenticator {
 
   public constructor(private readonly store: AuthenticationStore, options: PersistentBearerAuthenticatorOptions) {
     this.now = options.now ?? (() => new Date());
-    this.attempts = new FixedWindowRateLimiter(options.attemptsPerMinute);
-    this.requests = new FixedWindowRateLimiter(options.requestsPerMinute);
+    const clock = (): number => this.now().getTime();
+    this.attempts = new FixedWindowRateLimiter(options.attemptsPerMinute, 60_000, 10_000, clock);
+    this.requests = new FixedWindowRateLimiter(options.requestsPerMinute, 60_000, 10_000, clock);
   }
 
   public async authenticate(request: AuthenticationRequest): Promise<Principal> {
