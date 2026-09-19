@@ -23,6 +23,10 @@ export class AuthenticationError extends ServerAgentError {
   public constructor(message = 'Authentication required') { super(message, 'AUTHENTICATION_REQUIRED'); }
 }
 
+export class RateLimitError extends ServerAgentError {
+  public constructor(message = 'Too many requests') { super(message, 'RATE_LIMITED'); }
+}
+
 export class SandboxViolationError extends ServerAgentError {
   public constructor(message: string) { super(message, 'SANDBOX_VIOLATION'); }
 }
