@@ -83,6 +83,7 @@ function stringArray(value: unknown): string[] {
 
 export class OAuthService {
   private readonly loginAttempts = new FixedWindowRateLimiter(10, 60_000, 1024);
+  private readonly registrationAttempts = new FixedWindowRateLimiter(20, 60_000, 1024);
 
   public constructor(
     private readonly db: SqliteDatabase,
@@ -132,6 +133,11 @@ export class OAuthService {
   }
 
   private register(request: OAuthHttpRequest): OAuthHttpResponse {
+    const source = request.remoteAddress?.trim() || 'unknown';
+    if (!this.registrationAttempts.consume(source)) return this.oauthJsonError(429, 'temporarily_unavailable', 'Too many client registrations');
+    this.pruneExpired();
+    this.pruneOrphanClients();
+
     let payload: Record<string, unknown>;
     try {
       const parsed = JSON.parse(request.body) as unknown;
@@ -341,5 +347,15 @@ export class OAuthService {
     const now = nowIso();
     this.db.raw.prepare('DELETE FROM oauth_authorization_codes WHERE expires_at < ? OR used_at IS NOT NULL').run(now);
     this.db.raw.prepare('DELETE FROM oauth_refresh_tokens WHERE expires_at < ?').run(now);
+  }
+
+  private pruneOrphanClients(): void {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    this.db.raw.prepare(`
+      DELETE FROM oauth_clients
+      WHERE created_at < ?
+        AND client_id NOT IN (SELECT client_id FROM oauth_authorization_codes)
+        AND client_id NOT IN (SELECT client_id FROM oauth_refresh_tokens)
+    `).run(cutoff);
   }
 }
