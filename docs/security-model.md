@@ -32,6 +32,12 @@ Remote credentials are multi-principal and multi-token. SQLite stores only SHA-2
 
 Authentication attempts are bounded per remote address and authenticated requests are bounded per principal. Rate-limited requests return HTTP 429. Authentication audit records outcome/principal/credential metadata without bearer material; MCP audit additionally records the non-secret credential id. Both authentication and MCP audit tables are pruned by a configured retention window at startup.
 
+## Supply-chain and protocol compatibility
+
+The npm dependency graph is locked with `package-lock.json`; build/install paths use `npm ci --ignore-scripts` and CI runs a high-severity dependency audit. Full validation executes on the supported Node.js 22 baseline and Node.js 24. GitHub Actions are pinned to immutable commit SHAs.
+
+Protocol compatibility is independently exercised with the official MCP TypeScript v2 client pinned at `2.0.0` against the live Server Agent HTTP endpoint using protocol `2026-07-28`. The compatibility-only SDK is not a runtime dependency.
+
 ## MCP boundary
 
 The executable runtime binds to loopback by default. A non-loopback bind is rejected unless `SERVER_AGENT_MCP_ALLOW_PUBLIC_BIND=true` is explicitly configured.
