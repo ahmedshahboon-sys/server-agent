@@ -1,6 +1,6 @@
 import type { CommandConfig, DatabaseConfig, DeploymentConfig, HealthConfig, ProjectPermission, ProjectRecord, ProjectRuntime } from '../core/types.js';
 import { ValidationError } from '../core/errors.js';
-import { PROJECT_PERMISSION_SET } from '../security/permissions.js';
+import { PROJECT_CAPABILITY_PERMISSION_SET } from '../security/permissions.js';
 
 export function objectArg(value: unknown, name: string): Readonly<Record<string, unknown>> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError(`${name} must be an object`);
@@ -180,7 +180,7 @@ function deployment(value: unknown): DeploymentConfig {
 
 function permissions(value: unknown): readonly ProjectPermission[] {
   const values = stringArray(value, 'project.permissions', 64, 64);
-  for (const permission of values) if (!PROJECT_PERMISSION_SET.has(permission as ProjectPermission)) throw new ValidationError(`Unknown project permission ${permission}`);
+  for (const permission of values) if (!PROJECT_CAPABILITY_PERMISSION_SET.has(permission as ProjectPermission)) throw new ValidationError(`Unknown project permission ${permission}`);
   return [...new Set(values)] as ProjectPermission[];
 }
 
