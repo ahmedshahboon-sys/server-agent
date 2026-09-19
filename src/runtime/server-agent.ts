@@ -31,6 +31,7 @@ import { createServerAgentMcpServer } from '../mcp/server.js';
 import { loadOptionalRuntimeAuthentication } from './auth.js';
 import { AuthenticationStore } from '../security/auth-store.js';
 import { AuthenticationError } from '../core/errors.js';
+import { MaintenanceService } from '../maintenance/maintenance-service.js';
 
 const SERVER_VERSION = '0.5.0';
 
@@ -55,6 +56,15 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
 
   const logger = new StructuredLogger(config.logLevel);
   const db = new SqliteDatabase(config.dbPath);
+  const maintenance = new MaintenanceService(db, {
+    dataDir: config.dataDir,
+    dbPath: config.dbPath,
+    maintenanceMode: config.maintenanceMode,
+    operationalRetentionDays: config.operationalRetentionDays,
+    jobLogRetentionDays: config.jobLogRetentionDays,
+    minFreeDiskBytes: config.minFreeDiskBytes,
+    stateDbWarningBytes: config.stateDbWarningBytes,
+  });
   const authStore = new AuthenticationStore(db);
   const bootstrap = loadOptionalRuntimeAuthentication(env);
   if (bootstrap !== null) authStore.bootstrapCredential(bootstrap.principal, bootstrap.credentialId, bootstrap.token, bootstrap.expiresAt);
@@ -64,18 +74,18 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
   const idempotency=new IdempotencyStore(db);
   const leases=new OperationLeaseStore(db);
   const reclaimedLeases=leases.reclaimExpired();
-  const operations=new PersistentOperationManager(db,idempotency,leases,runtimeInstanceId,60_000);
+  const operations=new PersistentOperationManager(db,idempotency,leases,runtimeInstanceId,60_000,maintenance);
   const projects = new ProjectRegistry(db);
   const authorizer = new DefaultDenyAuthorizer();
-  const files = new ProjectFileService(projects, authorizer, { maxFileBytes: config.maxFileBytes });
+  const files = new ProjectFileService(projects, authorizer, { maxFileBytes: config.maxFileBytes }, maintenance);
   const runner = new RestrictedCommandRunner(projects, authorizer, { timeoutMs: config.commandTimeoutMs, maxOutputBytes: config.maxCommandOutputBytes, environment: env });
   const tasks = new TaskEngine(db);
-  const jobs = new JobManager(db,runner,config.dataDir,config.maxConcurrentJobs,{instanceId:runtimeInstanceId,idempotency,leases,leaseTtlMs:config.commandTimeoutMs+5_000});
+  const jobs = new JobManager(db,runner,config.dataDir,config.maxConcurrentJobs,{instanceId:runtimeInstanceId,idempotency,leases,leaseTtlMs:config.commandTimeoutMs+5_000,mutationGuard:maintenance});
   tasks.bindJobController(jobs);
   const git = new GitService(projects, authorizer, { timeoutMs: config.commandTimeoutMs, maxOutputBytes: config.maxCommandOutputBytes, environment: env });
   const validation = new LocalValidationPipeline(db, projects, runner, config.maxFixAttempts);
   const databaseFactory = new ProjectDatabaseAdapterFactory();
-  const database = new DatabaseService(db, projects, authorizer, databaseFactory, { timeoutMs: config.databaseQueryTimeoutMs, maxRows: config.databaseMaxRows, maxResultBytes: config.databaseMaxResultBytes },{idempotency,leases,ownerId:runtimeInstanceId,leaseTtlMs:config.databaseQueryTimeoutMs+5_000});
+  const database = new DatabaseService(db, projects, authorizer, databaseFactory, { timeoutMs: config.databaseQueryTimeoutMs, maxRows: config.databaseMaxRows, maxResultBytes: config.databaseMaxResultBytes },{idempotency,leases,ownerId:runtimeInstanceId,leaseTtlMs:config.databaseQueryTimeoutMs+5_000,mutationGuard:maintenance});
   const serviceController = new SystemdServiceController(env);
   const services = new ProjectServiceManager(projects,authorizer,serviceController,{idempotency,leases,ownerId:runtimeInstanceId,leaseTtlMs:60_000});
   const logs = new JournalLogReader(projects, authorizer, env, config.maxLogOutputBytes);
@@ -90,13 +100,21 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
   const interruptedTasks = tasks.markInterruptedForRecovery();
   const unknownWorkTasks=tasks.markUnknownWorkForRecovery();
   if (interruptedTasks > 0 || unknownWorkTasks>0 || reconciledJobs > 0 || reconciledOperations>0 || reclaimedLeases > 0) logger.warn('Recovered interrupted runtime state', { interruptedTasks, unknownWorkTasks, reconciledJobs, reconciledOperations, reclaimedLeases });
+  try {
+    const maintenanceReport=await maintenance.runStartupMaintenance();
+    logger.info('Startup maintenance completed', maintenanceReport);
+  } catch (error) {
+    logger.warn('Startup maintenance could not complete; service remains available with readiness checks', { error: redactError(error) });
+  }
 
   const server = createServerAgentMcpServer({
     authorizer,
     stateDatabase: db,
     authenticator: new PersistentBearerAuthenticator(authStore, { attemptsPerMinute: config.authAttemptsPerMinute, requestsPerMinute: config.authRequestsPerMinute }),
-    services: { projects, files, git, jobs, operations, validation, database, tasks, deployments, health, logs, services, recovery, rollback },
+    services: { projects, files, git, jobs, operations, validation, database, tasks, deployments, health, logs, services, recovery, rollback, maintenance },
     transport: { path: config.mcpPath, maxBodyBytes: config.mcpMaxBodyBytes, allowedOrigins: config.mcpAllowedOrigins, serverName: 'server-agent', serverVersion: SERVER_VERSION },
+    mutationGuard: maintenance,
+    health: maintenance,
   });
   server.requestTimeout = 15_000;
   server.headersTimeout = 10_000;
