@@ -27,7 +27,7 @@ test('job manager persists command lifecycle and output locations', async()=>{
 
 test('job output is streamed while running and secrets are redacted before disk write', async()=>{
   const temp=await tempDir('server-agent-job-stream-');const db=new SqliteDatabase(':memory:');const registry=new ProjectRegistry(db);
-  registry.create(projectFixture({root:temp.path,permissions:['commands:run'],environmentRefs:['PROJECT_SECRET'],commands:{allowed:{stream:['node','-e','process.stdout.write(process.env.PROJECT_SECRET+"\\n");setTimeout(()=>process.stdout.write("later\\n"),500);setTimeout(()=>process.exit(0),900)']}}}));
+  registry.create(projectFixture({root:temp.path,permissions:['commands:run'],database:{adapter:'none',defaultAccess:'read'},environmentRefs:['PROJECT_SECRET'],commands:{allowed:{stream:['node','-e','process.stdout.write(process.env.PROJECT_SECRET+"\\n");setTimeout(()=>process.stdout.write("later\\n"),500);setTimeout(()=>process.exit(0),900)']}}}));
   const runner=new RestrictedCommandRunner(registry,new DefaultDenyAuthorizer(),{timeoutMs:3000,maxOutputBytes:4096,environment:{...process.env,PROJECT_SECRET:'very-secret-value'}});const jobs=new JobManager(db,runner,temp.path,1);
   try{const job=await jobs.start('project-a',principal,'stream');await sleep(200);assert.equal(jobs.get(job.jobId)?.status,'RUNNING');const partial=await fs.readFile(job.stdoutPath,'utf8');assert.match(partial,/\[REDACTED\]/);assert.equal(partial.includes('very-secret-value'),false);await waitForTerminal(jobs,job.jobId);}
   finally{await jobs.shutdown();db.close();await temp.cleanup();}
