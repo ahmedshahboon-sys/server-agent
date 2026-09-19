@@ -312,6 +312,13 @@ const BASE_MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_mcp_audit_credential ON mcp_audit(credential_id, created_at);
     `,
   },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE persistent_operations ADD COLUMN cancel_requested_at TEXT;
+      CREATE INDEX IF NOT EXISTS idx_persistent_operations_cancel ON persistent_operations(cancel_requested_at);
+    `,
+  },
 ] as const;
 
 export class SqliteDatabase {
