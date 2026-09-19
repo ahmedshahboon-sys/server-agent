@@ -41,6 +41,7 @@ function expiry(value: string | undefined): string | null {
 
 export function loadRuntimeAuthentication(env: NodeJS.ProcessEnv = process.env): RuntimeAuthentication {
   const token = env.SERVER_AGENT_MCP_BEARER_TOKEN;
+  if (token === 'CHANGE_ME_WITH_32_PLUS_RANDOM_CHARACTERS') throw new AuthenticationError('Example bearer credential placeholder is not allowed');
   if (token === undefined || token.length < 32 || token.length > 4096) {
     throw new AuthenticationError('SERVER_AGENT_MCP_BEARER_TOKEN must contain 32-4096 characters');
   }
