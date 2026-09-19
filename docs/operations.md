@@ -44,6 +44,27 @@ A credential id is immutable token identity. Never overwrite an existing id with
 
 The product remains runtime-dependency-free; the official client is not shipped with Server Agent. This keeps the execution footprint small while continuously detecting protocol drift.
 
+## Maintenance mode, disk pressure, and self-health
+
+Set `SERVER_AGENT_MAINTENANCE_MODE=true` only for an intentional operator maintenance window. Read-only diagnostics remain available, while mutations marked by the MCP registry and the underlying file/job/database/durable-operation guards fail closed.
+
+The runtime exposes unauthenticated loopback-oriented self-health endpoints on the same listener:
+
+- `GET /healthz`: process liveness only;
+- `GET /readyz`: state-database queryability plus configured free-disk headroom.
+
+Keep these endpoints behind the same local/tunnel boundary as MCP. They contain bounded process/disk state only and no project secrets.
+
+`SERVER_AGENT_MIN_FREE_DISK_BYTES` is a pre-mutation floor. When free space drops below the floor, new writes/jobs/durable operations are rejected before work begins. `SERVER_AGENT_STATE_DB_WARNING_BYTES` is surfaced through `system_snapshot` metrics to flag state/WAL growth before it becomes a disk incident.
+
+Startup maintenance retains durable task/deployment/rollback evidence while pruning older low-value telemetry according to `SERVER_AGENT_OPERATIONAL_RETENTION_DAYS`, older terminal job log files according to `SERVER_AGENT_JOB_LOG_RETENTION_DAYS`, and audit records according to the existing audit-retention setting. A passive SQLite WAL checkpoint is issued after pruning.
+
+## MCP Tasks extension
+
+For protocol `2026-07-28`, clients that advertise `io.modelcontextprotocol/tasks` may receive a task handle from durable validation/deploy/recovery/rollback tool calls. Poll with `tasks/get`; `Mcp-Name` must equal the returned `taskId`. Cancellation is cooperative: `tasks/cancel` records operator intent, but a safety-critical operation is allowed to continue to a verified terminal state rather than being killed mid-transition.
+
+Clients that do not advertise the extension keep the original Server Agent durable-operation response shape, preserving backward compatibility.
+
 ## Safe upgrade
 
 Before an upgrade:
