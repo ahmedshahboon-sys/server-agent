@@ -87,21 +87,23 @@ function assertRegistrationPrivileges(registry:McpToolRegistry, principal:Princi
 
 function assertUpdatePrivileges(registry:McpToolRegistry, principal:Principal, current:ProjectRecord, next:Omit<ProjectRecord,'createdAt'|'updatedAt'>):void {
   const projectId=current.id;
-  if (current.root !== next.root) requireAdditional(registry, principal, projectId, 'project:update:root', true);
-  if (!isDeepStrictEqual(current.permissions, next.permissions)) requireAdditional(registry, principal, projectId, 'project:update:capabilities', true);
-  if (!isDeepStrictEqual(current.commands, next.commands) || !isDeepStrictEqual(current.environmentRefs, next.environmentRefs)) requireAdditional(registry, principal, projectId, 'project:update:commands');
-  if (!isDeepStrictEqual(current.database, next.database)) requireAdditional(registry, principal, projectId, 'project:update:database');
+  let changed=false;
+  if (current.root !== next.root) { changed=true; requireAdditional(registry, principal, projectId, 'project:update:root', true); }
+  if (!isDeepStrictEqual(current.permissions, next.permissions)) { changed=true; requireAdditional(registry, principal, projectId, 'project:update:capabilities', true); }
+  if (!isDeepStrictEqual(current.commands, next.commands) || !isDeepStrictEqual(current.environmentRefs, next.environmentRefs)) { changed=true; requireAdditional(registry, principal, projectId, 'project:update:commands'); }
+  if (!isDeepStrictEqual(current.database, next.database)) { changed=true; requireAdditional(registry, principal, projectId, 'project:update:database'); }
   if (
     !isDeepStrictEqual(current.deployment, next.deployment) ||
     !isDeepStrictEqual(current.health, next.health) ||
     !isDeepStrictEqual(current.ports, next.ports) ||
     current.serviceName !== next.serviceName ||
     current.domain !== next.domain
-  ) requireAdditional(registry, principal, projectId, 'project:update:deployment');
-  if (current.enabled !== next.enabled) requireAdditional(registry, principal, projectId, 'project:update:state');
+  ) { changed=true; requireAdditional(registry, principal, projectId, 'project:update:deployment'); }
+  if (current.enabled !== next.enabled) { changed=true; requireAdditional(registry, principal, projectId, 'project:update:state'); }
   if (current.name !== next.name || current.runtime !== next.runtime || !isDeepStrictEqual(current.metadata, next.metadata)) {
-    requireAdditional(registry, principal, projectId, 'project:update:metadata');
+    changed=true; requireAdditional(registry, principal, projectId, 'project:update:metadata');
   }
+  if (!changed) throw new ValidationError('Project update contains no changes');
 }
 
 export function registerProjectTools(registry: McpToolRegistry, projects: ProjectStore): void {
@@ -126,7 +128,7 @@ export function registerProjectTools(registry: McpToolRegistry, projects: Projec
   });
   registry.register({
     definition: { name: 'update_project', description: 'Replace mutable registration fields. Each changed field group requires its dedicated management permission; root and capability changes additionally require global scope.', inputSchema: objectSchema({ project_id: projectIdSchema, project: updateProjectPayload }, ['project_id', 'project']) },
-    permission: 'project:read', projectArgument: 'project_id',
+    permission: 'project:read', projectArgument: 'project_id', skipProjectCapabilityCheck: true,
     handler: async (args, context) => {
       const projectId=stringArg(args,'project_id')??'';
       const current=projects.get(projectId);
@@ -137,6 +139,11 @@ export function registerProjectTools(registry: McpToolRegistry, projects: Projec
       assertUpdatePrivileges(registry,context.principal,current,{...next,id:projectId});
       return projects.update(projectId,withoutId(next));
     },
+  });
+  registry.register({
+    definition: { name: 'enable_project', description: 'Re-enable a disabled registry entry. This changes registry state only and never touches project files.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) },
+    permission: 'project:update:state', projectArgument: 'project_id', skipProjectCapabilityCheck: true,
+    handler: async (args) => projects.update(stringArg(args, 'project_id') ?? '', { enabled: true }),
   });
   registry.register({
     definition: { name: 'disable_project', description: 'Disable a registry entry without deleting project files.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) },
