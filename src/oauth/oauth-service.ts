@@ -245,7 +245,8 @@ export class OAuthService {
     target.searchParams.set('code', code);
     if (state !== '') target.searchParams.set('state', state);
     target.searchParams.set('iss', this.config.issuer);
-    return seeOther(target.toString());
+    const callback = escapeHtml(target.toString());
+    return html(200, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorization complete</title><style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 20px;background:#111;color:#eee}.card{background:#1d1d1d;padding:24px;border-radius:14px}a{display:inline-block;padding:12px 18px;border-radius:8px;background:#fff;color:#111;text-decoration:none;font-weight:700}small{color:#aaa}</style></head><body><h1>Authorization approved</h1><div class="card"><p>Continue to ChatGPT to finish connecting Server Agent.</p><p><a href="${callback}" rel="noreferrer">Continue to ChatGPT</a></p></div><p><small>This one-time authorization code expires shortly.</small></p></body></html>`);
   }
 
   private validateAuthorizeParams(params: URLSearchParams): { params: URLSearchParams } | { response: OAuthHttpResponse } {

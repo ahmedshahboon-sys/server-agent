@@ -124,8 +124,11 @@ test('OAuth service exposes discovery, DCR, PKCE code exchange, refresh, and bou
     const approved=new URLSearchParams(params);
     approved.set('owner_secret',ownerSecret);
     const authorization=oauth.handle(request('POST','/oauth/authorize',approved.toString(),{'content-type':'application/x-www-form-urlencoded'}));
-    assert.equal(authorization?.status,303);
-    const location=new URL(authorization?.headers.location??'');
+    assert.equal(authorization?.status,200);
+    assert.match(authorization?.body??'',/Continue to ChatGPT/);
+    const handoffMatch=(authorization?.body??'').match(/href="([^"]+)"/);
+    assert.ok(handoffMatch?.[1]);
+    const location=new URL(handoffMatch[1].replaceAll('&amp;','&'));
     assert.equal(location.origin,'https://chatgpt.com');
     assert.equal(location.searchParams.get('state'),'state-1');
     assert.equal(location.searchParams.get('iss'),base);
@@ -155,8 +158,11 @@ test('OAuth service exposes discovery, DCR, PKCE code exchange, refresh, and bou
     const noOfflineApproved=new URLSearchParams(noOfflineParams);
     noOfflineApproved.set('owner_secret',ownerSecret);
     const noOfflineAuthorization=oauth.handle(request('POST','/oauth/authorize',noOfflineApproved.toString(),{'content-type':'application/x-www-form-urlencoded'}));
-    assert.equal(noOfflineAuthorization?.status,303);
-    const noOfflineLocation=new URL(noOfflineAuthorization?.headers.location??'');
+    assert.equal(noOfflineAuthorization?.status,200);
+    assert.match(noOfflineAuthorization?.body??'',/Continue to ChatGPT/);
+    const noOfflineHandoffMatch=(noOfflineAuthorization?.body??'').match(/href="([^"]+)"/);
+    assert.ok(noOfflineHandoffMatch?.[1]);
+    const noOfflineLocation=new URL(noOfflineHandoffMatch[1].replaceAll('&amp;','&'));
     const noOfflineCode=noOfflineLocation.searchParams.get('code')??'';
     const noOfflineTokenBody=new URLSearchParams({
       grant_type:'authorization_code',
