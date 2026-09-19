@@ -10,18 +10,25 @@ describe('SqliteDatabase', () => {
     const db = new SqliteDatabase(':memory:');
     try {
       const versions = db.raw.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
-      assert.deepEqual(versions.map((row) => ({ ...row })), [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }]);
+      assert.deepEqual(
+        versions.map((row) => ({ ...row })),
+        Array.from({ length: 8 }, (_, index) => ({ version: index + 1 })),
+      );
       assert.doesNotThrow(() => db.raw.exec('SELECT archived_at FROM projects;'));
       assert.doesNotThrow(() => db.raw.exec('SELECT cancel_requested_at FROM persistent_operations;'));
       assert.doesNotThrow(() => db.raw.exec('SELECT * FROM tasks; SELECT * FROM jobs; SELECT * FROM idempotency_keys; SELECT * FROM deployments; SELECT * FROM health_checks; SELECT * FROM database_audit; SELECT * FROM recovery_runs; SELECT * FROM rollback_plans; SELECT * FROM mcp_audit; SELECT * FROM persistent_operations; SELECT * FROM auth_principals; SELECT * FROM auth_credentials; SELECT * FROM auth_audit;'));
-    } finally { db.close(); }
-    it('upgrades an existing v7 state database to v8 without replaying earlier migrations', async () => {
-    const temp=await tempDir('server-agent-schema-upgrade-');
-    const filename=path.join(temp.path,'state.sqlite');
-    const legacy=new DatabaseSync(filename);
-    try{
+    } finally {
+      db.close();
+    }
+  });
+
+  it('upgrades an existing v7 state database to v8 without replaying earlier migrations', async () => {
+    const temp = await tempDir('server-agent-schema-upgrade-');
+    const filename = path.join(temp.path, 'state.sqlite');
+    const legacy = new DatabaseSync(filename);
+    try {
       legacy.exec(`
-        CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL);
+        CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
         CREATE TABLE persistent_operations(
           operation_id TEXT PRIMARY KEY,
           task_id TEXT NOT NULL,
@@ -36,16 +43,24 @@ describe('SqliteDatabase', () => {
           error_json TEXT
         );
       `);
-      const insert=legacy.prepare('INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)');
-      for(let version=1;version<=7;version+=1)insert.run(version,'2026-09-18T00:00:00.000Z');
-    }finally{legacy.close();}
-    const upgraded=new SqliteDatabase(filename);
-    try{
-      const versions=upgraded.raw.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
-      assert.deepEqual(versions.map((row)=>({...row})),Array.from({length:8},(_,index)=>({version:index+1})));
-      const columns=upgraded.raw.prepare('PRAGMA table_info(persistent_operations)').all() as Array<{name:string}>;
-      assert.equal(columns.some((column)=>column.name==='cancel_requested_at'),true);
-    }finally{upgraded.close();await temp.cleanup();}
+      const insert = legacy.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)');
+      for (let version = 1; version <= 7; version += 1) insert.run(version, '2026-09-18T00:00:00.000Z');
+    } finally {
+      legacy.close();
+    }
+
+    const upgraded = new SqliteDatabase(filename);
+    try {
+      const versions = upgraded.raw.prepare('SELECT version FROM schema_migrations ORDER BY version').all();
+      assert.deepEqual(
+        versions.map((row) => ({ ...row })),
+        Array.from({ length: 8 }, (_, index) => ({ version: index + 1 })),
+      );
+      const columns = upgraded.raw.prepare('PRAGMA table_info(persistent_operations)').all() as Array<{ name: string }>;
+      assert.equal(columns.some((column) => column.name === 'cancel_requested_at'), true);
+    } finally {
+      upgraded.close();
+      await temp.cleanup();
+    }
   });
-});
 });
