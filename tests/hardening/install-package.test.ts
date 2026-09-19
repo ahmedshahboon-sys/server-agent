@@ -8,6 +8,8 @@ test('Phase 5 install package is non-root, local-bind-first, and non-destructive
   const installer = readFileSync('install/install.sh', 'utf8');
   const uninstaller = readFileSync('install/uninstall.sh', 'utf8');
   const helperUnit = readFileSync('install/systemd/server-agent-host-helper.service.template', 'utf8');
+  const lock = JSON.parse(readFileSync('package-lock.json','utf8')) as {lockfileVersion:number;packages:Record<string,{version?:string;devDependencies?:Record<string,string>}>};
+  const pkg = JSON.parse(readFileSync('package.json','utf8')) as {version:string;devDependencies:Record<string,string>};
 
   assert.match(unit, /^User=@@USER@@$/m);
   assert.match(unit, /^NoNewPrivileges=true$/m);
@@ -29,7 +31,12 @@ test('Phase 5 install package is non-root, local-bind-first, and non-destructive
   assert.match(helperUnit, /^RestrictAddressFamilies=AF_UNIX$/m);
   assert.match(helperUnit, /^ProtectSystem=strict$/m);
   assert.doesNotMatch(helperUnit, /AF_INET/);
+  assert.equal(lock.lockfileVersion,3);
+  assert.equal(lock.packages['']?.version,pkg.version);
+  assert.deepEqual(lock.packages['']?.devDependencies,pkg.devDependencies);
   assert.match(installer, /ENABLE_SERVICE=0/);
+  assert.match(installer, /npm\}" ci|NPM_BIN\}" ci|NPM_BIN.*ci/);
+  assert.doesNotMatch(installer, /npm install\b/);
   assert.match(installer, /--enable/);
   assert.doesNotMatch(installer, /rm\s+-rf\b/);
   assert.doesNotMatch(uninstaller, /rm\s+-rf\b/);
