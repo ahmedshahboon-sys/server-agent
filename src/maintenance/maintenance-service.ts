@@ -14,6 +14,10 @@ export interface MaintenanceOptions {
   readonly stateDbWarningBytes: number;
 }
 
+export interface MutationGuard {
+  assertMutationAllowed(targetPath?: string, requiredBytes?: number): void;
+}
+
 export interface MaintenanceReport {
   readonly databaseAuditDeleted: number;
   readonly healthChecksDeleted: number;
@@ -55,7 +59,7 @@ function nearestExisting(candidate:string):string{
   return current;
 }
 
-export class MaintenanceService {
+export class MaintenanceService implements MutationGuard {
   public constructor(private readonly db:SqliteDatabase,private readonly options:MaintenanceOptions){
     for(const [name,value] of Object.entries({
       operationalRetentionDays:options.operationalRetentionDays,
