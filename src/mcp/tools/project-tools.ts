@@ -120,7 +120,7 @@ export function registerProjectTools(registry: McpToolRegistry, projects: Projec
   });
   registry.register({
     definition: { name: 'register_project', description: 'Register project metadata only. Requires the full explicit project-registration management permission set and global scope.', inputSchema: objectSchema({ project: createProjectPayload }, ['project']) },
-    permission: 'project:register', requiresGlobalScope: true,
+    permission: 'project:register', requiresGlobalScope: true, mutating: true,
     handler: async (args, context) => {
       assertRegistrationPrivileges(registry, context.principal);
       return projects.create(projectInput(args['project']));
@@ -128,7 +128,7 @@ export function registerProjectTools(registry: McpToolRegistry, projects: Projec
   });
   registry.register({
     definition: { name: 'update_project', description: 'Replace mutable registration fields. Each changed field group requires its dedicated management permission; root and capability changes additionally require global scope.', inputSchema: objectSchema({ project_id: projectIdSchema, project: updateProjectPayload }, ['project_id', 'project']) },
-    permission: 'project:read', projectArgument: 'project_id', skipProjectCapabilityCheck: true,
+    permission: 'project:read', projectArgument: 'project_id', skipProjectCapabilityCheck: true, mutating: true,
     handler: async (args, context) => {
       const projectId=stringArg(args,'project_id')??'';
       const current=projects.get(projectId);
@@ -142,17 +142,17 @@ export function registerProjectTools(registry: McpToolRegistry, projects: Projec
   });
   registry.register({
     definition: { name: 'enable_project', description: 'Re-enable a disabled registry entry. This changes registry state only and never touches project files.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) },
-    permission: 'project:update:state', projectArgument: 'project_id', skipProjectCapabilityCheck: true,
+    permission: 'project:update:state', projectArgument: 'project_id', skipProjectCapabilityCheck: true, mutating: true,
     handler: async (args) => projects.update(stringArg(args, 'project_id') ?? '', { enabled: true }),
   });
   registry.register({
     definition: { name: 'disable_project', description: 'Disable a registry entry without deleting project files.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) },
-    permission: 'project:disable', projectArgument: 'project_id', skipProjectCapabilityCheck: true,
+    permission: 'project:disable', projectArgument: 'project_id', skipProjectCapabilityCheck: true, mutating: true,
     handler: async (args) => projects.disable(stringArg(args, 'project_id') ?? ''),
   });
   registry.register({
     definition: { name: 'remove_project', description: 'Archive the Server Agent registry entry as a tombstone so historical records remain valid. Project files are never deleted.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) },
-    permission: 'project:archive', projectArgument: 'project_id', skipProjectCapabilityCheck: true,
+    permission: 'project:archive', projectArgument: 'project_id', skipProjectCapabilityCheck: true, mutating: true,
     handler: async (args) => { projects.remove(stringArg(args, 'project_id') ?? ''); return { ok: true, archived: true }; },
   });
 }
