@@ -16,6 +16,7 @@ import type { RollbackEngine } from '../../recovery/rollback-engine.js';
 import type { ProjectServiceManager } from '../../services/service-controller.js';
 import type { TaskEngine } from '../../tasks/task-engine.js';
 import type { LocalValidationPipeline } from '../../validation/local-ci.js';
+import type { MaintenanceService } from '../../maintenance/maintenance-service.js';
 import { numberArg, objectArg, stringArg, stringArrayArg } from '../arguments.js';
 import type { McpToolRegistry } from '../tool-registry.js';
 import { registerFileTools } from './file-tools.js';
@@ -38,6 +39,7 @@ export interface ServerAgentMcpServices {
   readonly services: ProjectServiceManager;
   readonly recovery: RecoveryEngine;
   readonly rollback: RollbackEngine;
+  readonly maintenance: MaintenanceService;
 }
 
 function requireProjectCapability(services: ServerAgentMcpServices, projectId: string, permission: ProjectPermission): void {
@@ -199,6 +201,7 @@ function registerDiagnosticsTools(registry: McpToolRegistry, services: ServerAge
     permission: 'project:read', requiresGlobalScope: true,
     handler: async (_args, context) => ({
       process: { uptimeSeconds: Math.round(process.uptime()), rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed, node: process.version },
+      runtime: services.maintenance.metrics(),
       visibleProjects: services.projects.list().filter((project) => project.permissions.includes('project:read') && (context.principal.projectScopes.includes('*') || context.principal.projectScopes.includes(project.id))).length,
     }),
   });
