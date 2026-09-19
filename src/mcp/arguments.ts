@@ -1,5 +1,6 @@
 import type { CommandConfig, DatabaseConfig, DeploymentConfig, HealthConfig, ProjectPermission, ProjectRecord, ProjectRuntime } from '../core/types.js';
 import { ValidationError } from '../core/errors.js';
+import { PROJECT_PERMISSION_SET } from '../security/permissions.js';
 
 export function objectArg(value: unknown, name: string): Readonly<Record<string, unknown>> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError(`${name} must be an object`);
@@ -177,17 +178,9 @@ function deployment(value: unknown): DeploymentConfig {
   };
 }
 
-export const PROJECT_PERMISSIONS = new Set<ProjectPermission>([
-  'project:read','project:register','project:update:metadata','project:update:state','project:update:root','project:update:commands',
-  'project:update:database','project:update:deployment','project:update:capabilities','project:disable','project:archive',
-  'files:read','files:write','git:read','git:write','commands:run','tasks:read','tasks:write',
-  'database:read','database:write','deploy:read','deploy:run','health:read','logs:read','service:read','service:restart',
-  'recovery:read','recovery:run','rollback:read','rollback:run',
-]);
-
 function permissions(value: unknown): readonly ProjectPermission[] {
   const values = stringArray(value, 'project.permissions', 64, 64);
-  for (const permission of values) if (!PROJECT_PERMISSIONS.has(permission as ProjectPermission)) throw new ValidationError(`Unknown project permission ${permission}`);
+  for (const permission of values) if (!PROJECT_PERMISSION_SET.has(permission as ProjectPermission)) throw new ValidationError(`Unknown project permission ${permission}`);
   return [...new Set(values)] as ProjectPermission[];
 }
 
