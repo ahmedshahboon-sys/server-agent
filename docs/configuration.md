@@ -39,7 +39,7 @@ The executable runtime also requires:
 
 - `SERVER_AGENT_MCP_BEARER_TOKEN` — 32-4096 characters, generated and stored outside Git;
 - `SERVER_AGENT_MCP_PRINCIPAL_ID` — safe audit identity, default `chatgpt-remote`;
-- `SERVER_AGENT_MCP_PROJECT_SCOPES` — comma-separated project ids or `*`;
+- `SERVER_AGENT_MCP_PROJECT_SCOPES` — comma-separated explicit project ids; `*` is reserved for intentional global administration and is not the example default;
 - `SERVER_AGENT_MCP_PERMISSIONS` — comma-separated known Server Agent permissions.
 
 Authentication grants no project capability by itself. A call must pass all three layers:
@@ -48,7 +48,7 @@ Authentication grants no project capability by itself. A call must pass all thre
 2. the principal scope includes the requested project;
 3. the registered project explicitly permits the operation.
 
-Start with read-oriented permissions and expand only for intentional workflows.
+Start with read-oriented permissions and explicit project ids. The shipped environment examples use `example-project`, not `*`. Expand scope or grant registry-management permissions only for an intentional administrative workflow; normal runtime project capabilities do not grant registry-management authority.
 
 ## Secrets
 
