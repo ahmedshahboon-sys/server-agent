@@ -10,6 +10,7 @@ import type { GitService } from '../../git/git-service.js';
 import type { HealthCheckService } from '../../health/health-service.js';
 import type { JobManager } from '../../jobs/job-manager.js';
 import type { JournalLogReader } from '../../logs/journal-logs.js';
+import type { PersistentOperationManager, PersistentOperationType } from '../../operations/persistent-operation.js';
 import type { RecoveryEngine } from '../../recovery/recovery-engine.js';
 import type { RollbackEngine } from '../../recovery/rollback-engine.js';
 import type { ProjectServiceManager } from '../../services/service-controller.js';
@@ -27,6 +28,7 @@ export interface ServerAgentMcpServices {
   readonly files: ProjectFileService;
   readonly git: GitService;
   readonly jobs: JobManager;
+  readonly operations: PersistentOperationManager;
   readonly validation: LocalValidationPipeline;
   readonly database: DatabaseService;
   readonly tasks: TaskEngine;
@@ -54,6 +56,12 @@ function jobForProject(services: ServerAgentMcpServices, projectId: string, jobI
   const job = services.jobs.get(jobId);
   if (job === null || job.projectId !== projectId) throw new ValidationError('Job is not available for this project');
   return job;
+}
+
+function operationForProject(services:ServerAgentMcpServices,projectId:string,operationId:string,type:PersistentOperationType){
+  const operation=services.operations.get(operationId);
+  if(operation===null||operation.projectId!==projectId||operation.type!==type)throw new ValidationError(`${type.toLowerCase()} operation is not available for this project`);
+  return operation;
 }
 
 function deploymentForProject(services: ServerAgentMcpServices, projectId: string, deploymentId: string) {
@@ -165,7 +173,11 @@ function registerOperationalTools(registry: McpToolRegistry, services: ServerAge
   registry.register({ definition: { name: 'service_status', description: 'Read the registered project service status.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) }, permission: 'service:read', projectArgument: 'project_id', handler: async (args, ctx) => services.services.status(stringArg(args, 'project_id') ?? '', ctx.principal) });
   registry.register({ definition: { name: 'service_restart', description: 'Restart only the registered project service.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) }, permission: 'service:restart', projectArgument: 'project_id', handler: async (args, ctx) => { await services.services.restart(stringArg(args, 'project_id') ?? '', ctx.principal); return { ok: true }; } });
   registry.register({ definition: { name: 'health_check', description: 'Run the configured project health check.', inputSchema: objectSchema({ project_id: projectIdSchema }, ['project_id']) }, permission: 'health:read', projectArgument: 'project_id', handler: async (args, ctx) => services.health.check(stringArg(args, 'project_id') ?? '', ctx.principal) });
-  registry.register({ definition: { name: 'deploy', description: 'Run the guarded deployment engine for an existing task.', inputSchema: objectSchema({ project_id: projectIdSchema, task_id: stringSchema }, ['project_id', 'task_id']) }, permission: 'deploy:run', projectArgument: 'project_id', handler: async (args, ctx) => { const projectId = stringArg(args, 'project_id') ?? ''; const taskId = stringArg(args, 'task_id', { max: 128 }) ?? ''; taskForProject(services, projectId, taskId); return services.deployments.deploy(taskId, projectId, ctx.principal); } });
+  registry.register({ definition: { name: 'deploy', description: 'Start guarded deployment as a durable operation and return operation_id immediately.', inputSchema: objectSchema({ project_id: projectIdSchema, task_id: stringSchema }, ['project_id', 'task_id']) }, permission: 'deploy:run', projectArgument: 'project_id', handler: async (args, ctx) => {
+    const projectId=stringArg(args,'project_id')??'',taskId=stringArg(args,'task_id',{max:128})??'';taskForProject(services,projectId,taskId);
+    return services.operations.start('DEPLOYMENT',projectId,taskId,async()=>{const result=await services.deployments.deploy(taskId,projectId,ctx.principal);return result.status==='SUCCEEDED'?{targetId:result.deploymentId,result}:{targetId:result.deploymentId,result,succeeded:false,error:result.error??{message:`Deployment ended in ${result.status}`}};});
+  } });
+  registry.register({ definition: { name: 'deployment_operation_status', description: 'Read one durable deployment operation.', inputSchema: objectSchema({ project_id: projectIdSchema, operation_id: stringSchema }, ['project_id','operation_id']) }, permission: 'deploy:read', projectArgument: 'project_id', handler: async (args) => operationForProject(services,stringArg(args,'project_id')??'',stringArg(args,'operation_id',{max:128})??'','DEPLOYMENT') });
   registry.register({ definition: { name: 'deployment_status', description: 'Read one deployment or list project deployments.', inputSchema: objectSchema({ project_id: projectIdSchema, deployment_id: stringSchema }, ['project_id']) }, permission: 'deploy:read', projectArgument: 'project_id', handler: async (args) => { const projectId = stringArg(args, 'project_id') ?? ''; requireProjectCapability(services, projectId, 'deploy:read'); const id = stringArg(args, 'deployment_id', { optional: true, max: 128 }); return id === undefined ? services.deployments.list(projectId) : deploymentForProject(services, projectId, id); } });
 }
 
@@ -174,7 +186,11 @@ function registerRecoveryTools(registry: McpToolRegistry, services: ServerAgentM
   registry.register({ definition: { name: 'recovery_status', description: 'Read recovery history for a project task.', inputSchema: objectSchema({ project_id: projectIdSchema, task_id: stringSchema, recovery_id: stringSchema }, ['project_id', 'task_id']) }, permission: 'recovery:read', projectArgument: 'project_id', handler: async (args) => { const projectId = stringArg(args, 'project_id') ?? ''; requireProjectCapability(services, projectId, 'recovery:read'); const taskId = stringArg(args, 'task_id', { max: 128 }) ?? ''; taskForProject(services, projectId, taskId); const id = stringArg(args, 'recovery_id', { optional: true, max: 128 }); return id === undefined ? services.recovery.list(taskId) : recoveryForProject(services, projectId, id); } });
   registry.register({ definition: { name: 'rollback_plan', description: 'Create and persist a rollback safety plan without executing it.', inputSchema: objectSchema({ project_id: projectIdSchema, task_id: stringSchema }, ['project_id', 'task_id']) }, permission: 'rollback:run', projectArgument: 'project_id', handler: async (args, ctx) => services.rollback.plan(stringArg(args, 'task_id', { max: 128 }) ?? '', stringArg(args, 'project_id') ?? '', ctx.principal) });
   registry.register({ definition: { name: 'rollback_status', description: 'Read rollback plans for a project task.', inputSchema: objectSchema({ project_id: projectIdSchema, task_id: stringSchema, rollback_id: stringSchema }, ['project_id', 'task_id']) }, permission: 'rollback:read', projectArgument: 'project_id', handler: async (args) => { const projectId = stringArg(args, 'project_id') ?? ''; requireProjectCapability(services, projectId, 'rollback:read'); const taskId = stringArg(args, 'task_id', { max: 128 }) ?? ''; taskForProject(services, projectId, taskId); const id = stringArg(args, 'rollback_id', { optional: true, max: 128 }); return id === undefined ? services.rollback.list(taskId) : rollbackForProject(services, projectId, id); } });
-  registry.register({ definition: { name: 'rollback_execute', description: 'Execute only a previously READY rollback plan after revalidation.', inputSchema: objectSchema({ project_id: projectIdSchema, rollback_id: stringSchema }, ['project_id', 'rollback_id']) }, permission: 'rollback:run', projectArgument: 'project_id', handler: async (args, ctx) => services.rollback.execute(stringArg(args, 'rollback_id', { max: 128 }) ?? '', stringArg(args, 'project_id') ?? '', ctx.principal) });
+  registry.register({ definition: { name: 'rollback_execute', description: 'Start execution of a READY rollback plan as a durable operation after revalidation.', inputSchema: objectSchema({ project_id: projectIdSchema, rollback_id: stringSchema }, ['project_id', 'rollback_id']) }, permission: 'rollback:run', projectArgument: 'project_id', handler: async (args, ctx) => {
+    const projectId=stringArg(args,'project_id')??'',rollbackId=stringArg(args,'rollback_id',{max:128})??'';const plan=rollbackForProject(services,projectId,rollbackId);
+    return services.operations.start('ROLLBACK',projectId,plan.taskId,async()=>{const result=await services.rollback.execute(rollbackId,projectId,ctx.principal);return result.status==='SUCCEEDED'?{targetId:rollbackId,result}:{targetId:rollbackId,result,succeeded:false,error:result.error??{message:`Rollback ended in ${result.status}`}};});
+  } });
+  registry.register({ definition: { name: 'rollback_operation_status', description: 'Read one durable rollback execution operation.', inputSchema: objectSchema({ project_id: projectIdSchema, operation_id: stringSchema }, ['project_id','operation_id']) }, permission: 'rollback:read', projectArgument: 'project_id', handler: async (args) => operationForProject(services,stringArg(args,'project_id')??'',stringArg(args,'operation_id',{max:128})??'','ROLLBACK') });
 }
 
 function registerDiagnosticsTools(registry: McpToolRegistry, services: ServerAgentMcpServices): void {
@@ -194,7 +210,7 @@ function registerDiagnosticsTools(registry: McpToolRegistry, services: ServerAge
       requireProjectCapability(services, projectId, 'project:read');
       const project = services.projects.get(projectId);
       if (project === null) throw new ValidationError('Project is not available');
-      return { project: { id: project.id, name: project.name, enabled: project.enabled, runtime: project.runtime, serviceName: project.serviceName ?? null }, tasks: services.tasks.list(projectId).slice(0, 20), jobs: services.jobs.list(projectId).slice(0, 20), deployments: services.deployments.list(projectId).slice(0, 20) };
+      return { project: { id: project.id, name: project.name, enabled: project.enabled, runtime: project.runtime, serviceName: project.serviceName ?? null }, tasks: services.tasks.list(projectId).slice(0, 20), jobs: services.jobs.list(projectId).slice(0, 20), operations:services.operations.list(projectId).slice(0,20), deployments: services.deployments.list(projectId).slice(0, 20) };
     },
   });
 }
@@ -202,7 +218,7 @@ function registerDiagnosticsTools(registry: McpToolRegistry, services: ServerAge
 export function registerServerAgentTools(registry: McpToolRegistry, services: ServerAgentMcpServices): void {
   registerProjectTools(registry, services.projects);
   registerFileTools(registry, services.files);
-  registerGitCommandTools(registry, services.git, services.jobs, services.validation);
+  registerGitCommandTools(registry, services.git, services.jobs, services.validation,services.operations);
   registerTaskTools(registry, services);
   registerJobTools(registry, services);
   registerDatabaseTools(registry, services);

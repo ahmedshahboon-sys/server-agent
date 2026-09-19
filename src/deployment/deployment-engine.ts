@@ -11,7 +11,7 @@ import { LocalValidationPipeline } from '../validation/local-ci.js';
 import { TaskEngine } from '../tasks/task-engine.js';
 import type { HealthCheckResult } from '../health/health-service.js';
 import { HealthCheckService } from '../health/health-service.js';
-import type { ServiceController } from '../services/service-controller.js';
+import type { ServiceController, ServiceSnapshot } from '../services/service-controller.js';
 import { redactError, redactValue } from '../security/redaction.js';
 
 export interface DeploymentRecord {
@@ -76,7 +76,7 @@ export class DeploymentEngine {
     this.db.raw.prepare('INSERT INTO deployments(deployment_id,task_id,project_id,status,git_commit_before,git_commit_after,files_changed_json,commands_json,start_time,end_time,service,health_check_json,precheck_json,result_json,rollback_available,error_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(deploymentId,taskId,projectId,'PREPARING',precheck.commitBefore,null,'[]','[]',started,null,project.serviceName??null,null,JSON.stringify(redactValue(precheck)),null,precheck.commitBefore!==null?1:0,null);
     this.tasks.setDeployment(taskId,deploymentId);this.tasks.setGitReferences(taskId,precheck.commitBefore,null);this.tasks.setRollbackState(taskId,{gitCommit:precheck.commitBefore,migrationStatus:precheck.migrationStatus});
-    this.tasks.checkpoint(taskId,{currentStep:'deploy',completedSteps:['pre-deploy-checks'],remainingSteps:['deploy','health-check'],metadata:{deploymentId,commitBefore:precheck.commitBefore}});
+    this.tasks.checkpoint(taskId,{currentStep:'deploy',completedSteps:['pre-deploy-checks'],remainingSteps:['deploy','service-verification','health-check'],metadata:{deploymentId,commitBefore:precheck.commitBefore}});
 
     const commands:unknown[]=[];
     try{
@@ -96,14 +96,21 @@ export class DeploymentEngine {
       this.tasks.setGitReferences(taskId,precheck.commitBefore,after);
       this.db.raw.prepare('UPDATE deployments SET git_commit_after=?,files_changed_json=?,commands_json=? WHERE deployment_id=?').run(after,JSON.stringify(filesChanged),JSON.stringify(redactValue(commands)),deploymentId);
 
+      let serviceSnapshot:ServiceSnapshot|null=null;
+      if(project.serviceName!==undefined){
+        serviceSnapshot=await this.services.status(project.serviceName);
+        const summary={id:'service-status',service:project.serviceName,active:serviceSnapshot.active,state:serviceSnapshot.state};commands.push(summary);this.tasks.recordCommand(taskId,summary);
+        if(!serviceSnapshot.active)throw new HealthCheckError(`Post-deploy service state is ${serviceSnapshot.state}`);
+      }
+
       this.tasks.setStatus(taskId,'HEALTH_CHECKING');this.updateStatus(deploymentId,'HEALTH_CHECKING');
       const health=await this.health.check(projectId,internal,{taskId,deploymentId});this.tasks.setHealthResult(taskId,health);
       this.db.raw.prepare('UPDATE deployments SET health_check_json=? WHERE deployment_id=?').run(JSON.stringify(health),deploymentId);
       if(project.deployment.healthRequired&&health.state!=='HEALTHY')throw new HealthCheckError(`Post-deploy health is ${health.state}`);
 
       const finished=new Date().toISOString();
-      this.db.raw.prepare("UPDATE deployments SET status='SUCCEEDED',end_time=?,result_json=?,commands_json=? WHERE deployment_id=?").run(finished,JSON.stringify({ok:true}),JSON.stringify(redactValue(commands)),deploymentId);
-      this.tasks.checkpoint(taskId,{currentStep:'completed',completedSteps:['pre-deploy-checks','deploy','health-check'],remainingSteps:[],metadata:{deploymentId,health:health.state}});this.tasks.setStatus(taskId,'COMPLETED');
+      this.db.raw.prepare("UPDATE deployments SET status='SUCCEEDED',end_time=?,result_json=?,commands_json=? WHERE deployment_id=?").run(finished,JSON.stringify(redactValue({ok:true,headAfter:after,service:serviceSnapshot,health:health.state})),JSON.stringify(redactValue(commands)),deploymentId);
+      this.tasks.checkpoint(taskId,{currentStep:'completed',completedSteps:['pre-deploy-checks','deploy',...(serviceSnapshot===null?[]:['service-verification']),'health-check'],remainingSteps:[],metadata:{deploymentId,health:health.state,headAfter:after}});this.tasks.setStatus(taskId,'COMPLETED');
       return this.getRequired(deploymentId);
     }catch(error){
       const finished=new Date().toISOString();const safe=redactError(error);
