@@ -26,9 +26,11 @@ import { DeploymentEngine } from '../deployment/deployment-engine.js';
 import { RecoveryEvidenceCollector } from '../recovery/evidence.js';
 import { RecoveryEngine } from '../recovery/recovery-engine.js';
 import { RollbackEngine } from '../recovery/rollback-engine.js';
-import { StaticBearerAuthenticator } from '../mcp/auth.js';
+import { PersistentBearerAuthenticator } from '../mcp/auth.js';
 import { createServerAgentMcpServer } from '../mcp/server.js';
-import { loadRuntimeAuthentication } from './auth.js';
+import { loadOptionalRuntimeAuthentication } from './auth.js';
+import { AuthenticationStore } from '../security/auth-store.js';
+import { AuthenticationError } from '../core/errors.js';
 
 const SERVER_VERSION = '0.5.0';
 
@@ -48,12 +50,16 @@ function close(server: Server): Promise<void> {
 
 export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const config = loadConfig(env);
-  const authentication = loadRuntimeAuthentication(env);
   await mkdir(config.dataDir, { recursive: true, mode: 0o750 });
   await mkdir(path.dirname(config.dbPath), { recursive: true, mode: 0o750 });
 
   const logger = new StructuredLogger(config.logLevel);
   const db = new SqliteDatabase(config.dbPath);
+  const authStore = new AuthenticationStore(db);
+  const bootstrap = loadOptionalRuntimeAuthentication(env);
+  if (bootstrap !== null) authStore.bootstrapCredential(bootstrap.principal, bootstrap.credentialId, bootstrap.token, bootstrap.expiresAt);
+  if (!authStore.hasUsableCredential()) { db.close(); throw new AuthenticationError('No usable MCP credential is configured'); }
+  const prunedAudit = authStore.pruneAudit(config.auditRetentionDays);
   const runtimeInstanceId=randomUUID();
   const idempotency=new IdempotencyStore(db);
   const leases=new OperationLeaseStore(db);
@@ -88,7 +94,7 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
   const server = createServerAgentMcpServer({
     authorizer,
     stateDatabase: db,
-    authenticator: new StaticBearerAuthenticator(authentication.token, authentication.principal),
+    authenticator: new PersistentBearerAuthenticator(authStore, { attemptsPerMinute: config.authAttemptsPerMinute, requestsPerMinute: config.authRequestsPerMinute }),
     services: { projects, files, git, jobs, operations, validation, database, tasks, deployments, health, logs, services, recovery, rollback },
     transport: { path: config.mcpPath, maxBodyBytes: config.mcpMaxBodyBytes, allowedOrigins: config.mcpAllowedOrigins, serverName: 'server-agent', serverVersion: SERVER_VERSION },
   });
@@ -114,7 +120,7 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
 
   try {
     await listen(server, config.mcpPort, config.mcpHost);
-    logger.info('Server Agent MCP listening', { host: config.mcpHost, port: config.mcpPort, path: config.mcpPath, principalId: authentication.principal.id, projectScopeCount: authentication.principal.projectScopes.length });
+    logger.info('Server Agent MCP listening', { host: config.mcpHost, port: config.mcpPort, path: config.mcpPath, credentialCount: authStore.listCredentials().length, auditRetentionDays: config.auditRetentionDays, prunedAuthEvents: prunedAudit.authEvents, prunedMcpEvents: prunedAudit.mcpEvents });
   } catch (error) {
     db.close();
     throw error;

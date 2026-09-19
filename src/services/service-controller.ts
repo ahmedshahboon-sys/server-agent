@@ -7,6 +7,7 @@ import { currentIdempotencyKey } from '../idempotency/context.js';
 import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from '../operations/operation-lease.js';
 import { redactError } from '../security/redaction.js';
+import { requestHostControl } from '../host/control-client.js';
 
 export interface ServiceSnapshot {
   readonly active: boolean;
@@ -28,15 +29,26 @@ export class SystemdServiceController implements ServiceController {
 
   public async status(serviceName: string): Promise<ServiceSnapshot> {
     assertServiceName(serviceName);
-    const result = await executeArgv(['systemctl', 'is-active', serviceName], { cwd: '/', env: this.baseEnv(), timeoutMs: 5_000, maxOutputBytes: 16_384 });
+    const socket = this.hostHelperSocket();
+    const result = socket === null
+      ? await executeArgv(['systemctl', 'is-active', serviceName], { cwd: '/', env: this.baseEnv(), timeoutMs: 5_000, maxOutputBytes: 16_384 })
+      : await requestHostControl(socket, 'status', serviceName, undefined, 10_000, 65_536);
     const state = result.stdout.trim() || result.stderr.trim() || 'unknown';
-    return { active: result.exitCode === 0 && state === 'active', state, details: { exitCode: result.exitCode } };
+    return { active: result.exitCode === 0 && state === 'active', state, details: { exitCode: result.exitCode, hostHelper: socket !== null } };
   }
 
   public async restart(serviceName: string): Promise<void> {
     assertServiceName(serviceName);
-    const result = await executeArgv(['systemctl', 'restart', serviceName], { cwd: '/', env: this.baseEnv(), timeoutMs: 30_000, maxOutputBytes: 32_768 });
+    const socket = this.hostHelperSocket();
+    const result = socket === null
+      ? await executeArgv(['systemctl', 'restart', serviceName], { cwd: '/', env: this.baseEnv(), timeoutMs: 30_000, maxOutputBytes: 32_768 })
+      : await requestHostControl(socket, 'restart', serviceName, undefined, 35_000, 65_536);
     if (result.exitCode !== 0) throw new ValidationError('Service restart failed', { serviceName, exitCode: result.exitCode, stderr: result.stderr });
+  }
+
+  private hostHelperSocket(): string | null {
+    const value = this.environment.SERVER_AGENT_HOST_HELPER_SOCKET?.trim();
+    return value === undefined || value === '' ? null : value;
   }
 
   private baseEnv(): NodeJS.ProcessEnv {

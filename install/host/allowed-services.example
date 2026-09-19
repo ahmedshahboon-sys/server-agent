@@ -1,0 +1,4 @@
+# One exact systemd service unit per line.
+# Keep this empty until a registered project explicitly requires host service access.
+# Example:
+# marbo3a.service

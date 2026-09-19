@@ -1,23 +1,26 @@
 [Unit]
-Description=Server Agent MCP Service
-After=network-online.target
-Wants=network-online.target
+Description=Server Agent Host Control Helper
+After=local-fs.target
+Before=server-agent.service
 
 [Service]
 Type=simple
-User=@@USER@@
+User=root
 Group=@@GROUP@@
 WorkingDirectory=@@INSTALL_DIR@@
-EnvironmentFile=@@ENV_FILE@@
-ExecStart=@@NODE_BIN@@ @@INSTALL_DIR@@/dist/runtime/server-agent.js
+Environment=SERVER_AGENT_HOST_HELPER_SOCKET=/run/server-agent-host/hostctl.sock
+Environment=SERVER_AGENT_HOST_ALLOWLIST=@@ALLOWLIST@@
+ExecStart=@@NODE_BIN@@ @@INSTALL_DIR@@/dist/runtime/host-helper.js
 Restart=on-failure
 RestartSec=5s
-TimeoutStopSec=180s
-UMask=0077
+TimeoutStopSec=30s
+RuntimeDirectory=server-agent-host
+RuntimeDirectoryMode=0750
+UMask=0007
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
-ProtectSystem=full
+ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -30,13 +33,12 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 CapabilityBoundingSet=
 AmbientCapabilities=
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX
 SystemCallArchitectures=native
 MemoryAccounting=true
-MemoryHigh=1G
-MemoryMax=2G
-TasksMax=256
-LimitNOFILE=4096
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=256
 
 [Install]
 WantedBy=multi-user.target

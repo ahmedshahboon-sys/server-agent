@@ -7,9 +7,12 @@ test('Phase 5 install package is non-root, local-bind-first, and non-destructive
   const env = readFileSync('install/server-agent.env.example', 'utf8');
   const installer = readFileSync('install/install.sh', 'utf8');
   const uninstaller = readFileSync('install/uninstall.sh', 'utf8');
+  const helperUnit = readFileSync('install/systemd/server-agent-host-helper.service.template', 'utf8');
 
   assert.match(unit, /^User=@@USER@@$/m);
   assert.match(unit, /^NoNewPrivileges=true$/m);
+  assert.match(unit, /^ProtectHome=true$/m);
+  assert.match(unit, /^UMask=0077$/m);
   assert.match(unit, /^CapabilityBoundingSet=$/m);
   assert.doesNotMatch(unit, /^User=root$/m);
   assert.match(env, /^SERVER_AGENT_MCP_HOST=127\.0\.0\.1$/m);
@@ -17,9 +20,22 @@ test('Phase 5 install package is non-root, local-bind-first, and non-destructive
   assert.match(env, /^SERVER_AGENT_MCP_PROJECT_SCOPES=example-project$/m);
   assert.doesNotMatch(env, /^SERVER_AGENT_MCP_PROJECT_SCOPES=\*$/m);
   assert.match(env, /^SERVER_AGENT_MAX_CONCURRENT_JOBS=1$/m);
+  assert.match(env, /^SERVER_AGENT_AUTH_ATTEMPTS_PER_MINUTE=30$/m);
+  assert.match(env, /^SERVER_AGENT_AUTH_REQUESTS_PER_MINUTE=120$/m);
+  assert.match(env, /^SERVER_AGENT_AUDIT_RETENTION_DAYS=30$/m);
+  assert.match(env, /^SERVER_AGENT_HOST_HELPER_SOCKET=\/run\/server-agent-host\/hostctl\.sock$/m);
+  assert.match(env, /^SERVER_AGENT_MCP_CREDENTIAL_ID=bootstrap-chatgpt$/m);
+  assert.match(helperUnit, /^User=root$/m);
+  assert.match(helperUnit, /^RestrictAddressFamilies=AF_UNIX$/m);
+  assert.match(helperUnit, /^ProtectSystem=strict$/m);
+  assert.doesNotMatch(helperUnit, /AF_INET/);
   assert.match(installer, /ENABLE_SERVICE=0/);
   assert.match(installer, /--enable/);
   assert.doesNotMatch(installer, /rm\s+-rf\b/);
   assert.doesNotMatch(uninstaller, /rm\s+-rf\b/);
   assert.match(uninstaller, /Preserved intentionally/);
+  assert.match(installer, /allowed-services/);
+  assert.match(installer, /server-agent-host-helper\.service/);
+  assert.doesNotMatch(installer, /usermod\b[^\n]*systemd-journal/i);
+  assert.doesNotMatch(installer, /NOPASSWD|sudoers/i);
 });
