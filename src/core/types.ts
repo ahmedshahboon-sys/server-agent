@@ -2,7 +2,16 @@ export type ProjectRuntime = 'node' | 'python' | 'static' | 'other';
 
 export type ProjectPermission =
   | 'project:read'
-  | 'project:manage'
+  | 'project:register'
+  | 'project:update:metadata'
+  | 'project:update:state'
+  | 'project:update:root'
+  | 'project:update:commands'
+  | 'project:update:database'
+  | 'project:update:deployment'
+  | 'project:update:capabilities'
+  | 'project:disable'
+  | 'project:archive'
   | 'files:read'
   | 'files:write'
   | 'git:read'
