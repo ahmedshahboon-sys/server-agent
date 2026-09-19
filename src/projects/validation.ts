@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { ValidationError } from '../core/errors.js';
 import type { ProjectRecord } from '../core/types.js';
-import { PROJECT_PERMISSION_SET } from '../security/permissions.js';
+import { PROJECT_CAPABILITY_PERMISSION_SET } from '../security/permissions.js';
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,63}$/;
 const SECRETISH_KEY = /(?:password|secret|token|api[_-]?key|private[_-]?key|credential|database[_-]?url)/i;
@@ -77,7 +77,7 @@ export function validateProjectInput(project: Omit<ProjectRecord, 'createdAt' | 
   if (project.deployment.healthRequired && project.health.type === 'none') throw new ValidationError('Health-required deployment must configure a health check');
 
   if (!Array.isArray(project.permissions) || project.permissions.length > 64) throw new ValidationError('Project permissions are invalid');
-  for (const permission of project.permissions) if (!PROJECT_PERMISSION_SET.has(permission)) throw new ValidationError(`Unknown project permission ${permission}`);
+  for (const permission of project.permissions) if (!PROJECT_CAPABILITY_PERMISSION_SET.has(permission)) throw new ValidationError(`Unknown project permission ${permission}`);
   assertUnique(project.permissions, 'Project permissions');
   if (project.permissions.includes('recovery:run') && !project.permissions.includes('recovery:read')) throw new ValidationError('recovery:run requires recovery:read for evidence collection');
   if (project.permissions.includes('rollback:run')) {
