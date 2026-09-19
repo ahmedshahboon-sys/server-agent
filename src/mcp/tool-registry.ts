@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Authorizer } from '../core/interfaces.js';
+import type { Authorizer, ProjectStore } from '../core/interfaces.js';
 import type { Principal, ProjectPermission } from '../core/types.js';
 import { AuthorizationError, ValidationError } from '../core/errors.js';
 import type { SqliteDatabase } from '../database/sqlite.js';
@@ -26,6 +26,7 @@ export interface ToolRegistration {
   readonly permission: ProjectPermission;
   readonly projectArgument?: string;
   readonly requiresGlobalScope?: boolean;
+  readonly skipProjectCapabilityCheck?: boolean;
   readonly handler: (argumentsValue: Readonly<Record<string, unknown>>, context: ToolCallContext) => Promise<unknown>;
 }
 
@@ -40,7 +41,7 @@ function derivedIdempotencyKey(context:ToolCallContext,args:Readonly<Record<stri
 export class McpToolRegistry {
   private readonly registrations = new Map<string, ToolRegistration>();
 
-  public constructor(private readonly authorizer: Authorizer, private readonly db?: SqliteDatabase) {}
+  public constructor(private readonly authorizer: Authorizer, private readonly db?: SqliteDatabase, private readonly projects?: ProjectStore) {}
 
   public register(registration: ToolRegistration): void {
     if (!/^[a-z][a-z0-9_]{1,63}$/.test(registration.definition.name)) throw new ValidationError('MCP tool name is invalid');
@@ -71,6 +72,11 @@ export class McpToolRegistry {
     try {
       if (registration.requiresGlobalScope === true && !context.principal.projectScopes.includes('*')) throw new AuthorizationError();
       this.authorizer.assertAllowed(context.principal, registration.permission, projectId);
+      if (projectId !== undefined && this.projects !== undefined && registration.skipProjectCapabilityCheck !== true) {
+        const project = this.projects.get(projectId);
+        if (project === null || !project.enabled) throw new ValidationError('Project is not available');
+        if (!project.permissions.includes(registration.permission)) throw new AuthorizationError(`Project does not permit ${registration.permission}`);
+      }
       const key=derivedIdempotencyKey(context,args);
       const result = await withIdempotencyKey(key,()=>registration.handler(args, context));
       this.audit(context, name, projectId, true, null);
