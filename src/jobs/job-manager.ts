@@ -41,7 +41,7 @@ export class JobManager {
   }
 
   public async start(projectId:string,principal:Principal,commandId:string,taskId?:string,idempotencyKey?:string):Promise<JobRecord>{
-    this.mutationGuard?.assertMutationAllowed(this.outputDir,this.maxConcurrentJobs*this.leaseTtlMs);
+    this.mutationGuard?.assertMutationAllowed(this.outputDir,1_048_576);
     const effectiveKey=idempotencyKey??currentIdempotencyKey();
     const scope=`job-start:${projectId}`;
     const fingerprint=idempotencyFingerprint({projectId,commandId,taskId:taskId??null});
