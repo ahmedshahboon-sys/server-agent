@@ -10,6 +10,7 @@ const required = [
   'install/host/allowed-services.example',
   'docs/installation.md',
   'docs/cloudflare-remote-mcp.md',
+  'docs/chatgpt-oauth.md',
   'docs/operations.md',
   'docs/final-validation.md',
 ];
@@ -28,6 +29,10 @@ if (packageJson.dependencies !== undefined && Object.keys(packageJson.dependenci
 const envExample = readFileSync('install/server-agent.env.example', 'utf8');
 if (!envExample.includes('SERVER_AGENT_MCP_HOST=127.0.0.1')) errors.push('install environment must bind MCP to loopback by default');
 if (!envExample.includes('SERVER_AGENT_MCP_ALLOW_PUBLIC_BIND=false')) errors.push('public MCP bind must be disabled by default');
+if (!envExample.includes('SERVER_AGENT_OAUTH_ENABLED=false')) errors.push('OAuth must default to disabled');
+if (!envExample.includes('SERVER_AGENT_PUBLIC_BASE_URL=')) errors.push('OAuth public base URL setting must be present');
+if (!envExample.includes('SERVER_AGENT_OAUTH_OWNER_SECRET=')) errors.push('OAuth owner secret setting must be present without a committed value');
+if (!envExample.includes('SERVER_AGENT_OAUTH_ALLOWED_REDIRECT_ORIGINS=https://chatgpt.com')) errors.push('OAuth redirect origins must default to ChatGPT only');
 if (!envExample.includes('SERVER_AGENT_MAX_CONCURRENT_JOBS=1')) errors.push('heavy job concurrency must default to one');
 if (!envExample.includes('SERVER_AGENT_AUTH_ATTEMPTS_PER_MINUTE=30')) errors.push('authentication attempt limiting must be configured');
 if (!envExample.includes('SERVER_AGENT_AUTH_REQUESTS_PER_MINUTE=120')) errors.push('authenticated request limiting must be configured');
