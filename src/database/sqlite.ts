@@ -319,6 +319,46 @@ const BASE_MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_persistent_operations_cancel ON persistent_operations(cancel_requested_at);
     `,
   },
+  {
+    version: 9,
+    sql: `
+      CREATE TABLE IF NOT EXISTS oauth_clients (
+        client_id TEXT PRIMARY KEY,
+        redirect_uris_json TEXT NOT NULL,
+        client_name TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+        code_hash TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        code_challenge TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_oauth_codes_expiry ON oauth_authorization_codes(expires_at);
+
+      CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+        refresh_hash TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+        FOREIGN KEY(principal_id) REFERENCES auth_principals(principal_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_oauth_refresh_expiry ON oauth_refresh_tokens(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_oauth_refresh_principal ON oauth_refresh_tokens(principal_id, created_at);
+    `,
+  },
 ] as const;
 
 export class SqliteDatabase {
