@@ -231,6 +231,10 @@ export class AuthenticationStore {
     return rows.some((row)=>row.expires_at === null || new Date(row.expires_at).getTime() > now.getTime());
   }
 
+  public auditFailure(reason: string, now = new Date()): void {
+    this.audit(null, null, 'FAILURE', reason.slice(0, 64), now);
+  }
+
   public auditRateLimited(principalId: string | null, credentialId: string | null, now = new Date()): void {
     this.audit(principalId, credentialId, 'RATE_LIMITED', 'RATE_LIMITED', now);
   }
