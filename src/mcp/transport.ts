@@ -4,6 +4,7 @@ import { AuthenticationError, AuthorizationError, ProtocolError, RateLimitError,
 import type { McpAuthenticator } from './auth.js';
 import type { McpToolRegistry } from './tool-registry.js';
 import { safeRemoteError, safeRemoteValue } from './remote-response.js';
+import { MCP_TASKS_EXTENSION, type McpTasksExtension } from './tasks-extension.js';
 
 export const MCP_PROTOCOL_VERSION = '2026-07-28';
 const SERVER_INFO_KEY = 'io.modelcontextprotocol/serverInfo';
@@ -64,6 +65,13 @@ function parseRequest(body: string): JsonRpcRequest {
   return { jsonrpc: '2.0', id, method: row['method'], params: record(row['params'], 'params') };
 }
 
+function supportsTasks(capabilities:JsonObject):boolean{
+  const extensions=capabilities['extensions'];
+  if(extensions===null||typeof extensions!=='object'||Array.isArray(extensions))return false;
+  const value=(extensions as Record<string,unknown>)[MCP_TASKS_EXTENSION];
+  return value!==undefined&&value!==null&&typeof value==='object'&&!Array.isArray(value);
+}
+
 function originAllowed(origin: string, allowlist: readonly string[]): boolean {
   let parsed: URL;
   try { parsed = new URL(origin); } catch { return false; }
@@ -82,6 +90,7 @@ export class McpHttpTransport {
     private readonly authenticator: McpAuthenticator,
     private readonly tools: McpToolRegistry,
     private readonly options: McpTransportOptions,
+    private readonly tasks?: McpTasksExtension,
   ) {
     this.serverInfo = { name: options.serverName ?? 'server-agent', version: options.serverVersion ?? '0.5.0' };
   }
@@ -125,13 +134,15 @@ export class McpHttpTransport {
     try { meta = record(rpc.params['_meta'], 'params._meta'); } catch (error) { const safe = safeRemoteError(error); return this.protocolError(rpc.id, 400, -32602, safe.message, safe.data); }
     if (meta[PROTOCOL_VERSION_KEY] !== MCP_PROTOCOL_VERSION) return this.protocolError(rpc.id, 400, -32020, 'Request protocol metadata does not match MCP-Protocol-Version');
     if (meta[CLIENT_CAPABILITIES_KEY] === undefined) return this.protocolError(rpc.id, 400, -32020, 'Client capabilities metadata is required');
-    try { record(meta[CLIENT_CAPABILITIES_KEY], `params._meta.${CLIENT_CAPABILITIES_KEY}`); }
+    let clientCapabilities:JsonObject;
+    try { clientCapabilities=record(meta[CLIENT_CAPABILITIES_KEY], `params._meta.${CLIENT_CAPABILITIES_KEY}`); }
     catch { return this.protocolError(rpc.id, 400, -32020, 'Client capabilities metadata is required'); }
+    const tasksSupported=supportsTasks(clientCapabilities);
 
     if (rpc.method === 'server/discover') return json(200, this.success(rpc.id, {
       resultType: 'complete',
       supportedVersions: [MCP_PROTOCOL_VERSION],
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, ...(this.tasks===undefined?{}:{extensions:{[MCP_TASKS_EXTENSION]:{}}}) },
       instructions: 'Server Agent exposes project-scoped, authenticated, least-privilege operational tools. Mutating operations remain guarded by project capabilities and safety checks.',
       ttlMs: 300_000,
       cacheScope: 'private',
@@ -140,17 +151,32 @@ export class McpHttpTransport {
       if (header(request.headers, 'mcp-name') !== undefined) return this.protocolError(rpc.id, 400, -32020, 'Mcp-Name is not valid for tools/list');
       return json(200, this.success(rpc.id, { resultType: 'complete', tools: this.tools.list(principal), ttlMs: 0, cacheScope: 'private' }));
     }
-    if (rpc.method === 'tools/call') return this.callTool(rpc, request, principal);
+    if (rpc.method === 'tools/call') return this.callTool(rpc, request, principal,tasksSupported);
+    if (['tasks/get','tasks/update','tasks/cancel'].includes(rpc.method)) {
+      if(this.tasks===undefined)return this.protocolError(rpc.id,404,-32601,'Method not found');
+      if(!tasksSupported)return this.protocolError(rpc.id,400,-32020,'Missing required client capability',{requiredCapabilities:{extensions:{[MCP_TASKS_EXTENSION]:{}}}});
+      if(header(request.headers,'mcp-name')!==undefined)return this.protocolError(rpc.id,400,-32020,'Mcp-Name is not valid for task methods');
+      const taskId=rpc.params['taskId'];
+      if(typeof taskId!=='string'||taskId==='')return this.protocolError(rpc.id,400,-32602,'taskId is required');
+      try{
+        const result=rpc.method==='tasks/get'?this.tasks.get(taskId,principal):rpc.method==='tasks/update'?this.tasks.update(taskId,principal):this.tasks.cancel(taskId,principal);
+        return json(200,this.success(rpc.id,result));
+      }catch(error){const safe=safeRemoteError(error);if(error instanceof AuthenticationError||error instanceof AuthorizationError)return this.protocolError(rpc.id,403,safe.code,safe.message,safe.data);return this.protocolError(rpc.id,400,safe.code,safe.message,safe.data);}
+    }
     return this.protocolError(rpc.id, 404, -32601, 'Method not found');
   }
 
-  private async callTool(rpc: JsonRpcRequest, request: McpHttpRequest, principal: Principal): Promise<McpHttpResponse> {
+  private async callTool(rpc: JsonRpcRequest, request: McpHttpRequest, principal: Principal, tasksSupported:boolean): Promise<McpHttpResponse> {
     const name = rpc.params['name'];
     if (typeof name !== 'string' || name === '') return this.protocolError(rpc.id, 400, -32602, 'Tool name is required');
     if (header(request.headers, 'mcp-name') !== name) return this.protocolError(rpc.id, 400, -32020, 'Mcp-Name header does not match tool name');
     if (!this.tools.has(name)) return this.protocolError(rpc.id, 404, -32601, 'Tool not found');
     try {
       const value = safeRemoteValue(await this.tools.call(name, rpc.params['arguments'], { principal, requestId: rpc.id }));
+      if(tasksSupported&&this.tasks!==undefined&&this.tools.isTaskBacked(name)){
+        const operationId=value!==null&&typeof value==='object'&&!Array.isArray(value)?(value as Record<string,unknown>)['operationId']:undefined;
+        if(typeof operationId==='string')return json(200,this.success(rpc.id,this.tasks.create(operationId,principal)));
+      }
       return json(200, this.success(rpc.id, { resultType: 'complete', content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false }));
     } catch (error) {
       const safe = safeRemoteError(error);
