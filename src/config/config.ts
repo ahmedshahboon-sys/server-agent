@@ -23,6 +23,9 @@ export interface ServerAgentConfig {
   readonly mcpMaxBodyBytes: number;
   readonly mcpAllowedOrigins: readonly string[];
   readonly mcpAllowPublicBind: boolean;
+  readonly authAttemptsPerMinute: number;
+  readonly authRequestsPerMinute: number;
+  readonly auditRetentionDays: number;
 }
 
 const LOG_LEVELS = new Set<LogLevel>(['debug', 'info', 'warn', 'error']);
@@ -40,6 +43,9 @@ const LIMITS = {
   maxLogOutputBytes: 4_194_304,
   maxRecoveryAttempts: 10,
   mcpMaxBodyBytes: 4_194_304,
+  authAttemptsPerMinute: 10_000,
+  authRequestsPerMinute: 100_000,
+  auditRetentionDays: 3650,
 } as const;
 
 function boundedPositiveInt(value: string | undefined, fallback: number, name: string, maximum: number): number {
@@ -114,5 +120,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerAgentCon
     mcpMaxBodyBytes: boundedPositiveInt(env.SERVER_AGENT_MCP_MAX_BODY_BYTES, 1_048_576, 'SERVER_AGENT_MCP_MAX_BODY_BYTES', LIMITS.mcpMaxBodyBytes),
     mcpAllowedOrigins: origins(env.SERVER_AGENT_MCP_ALLOWED_ORIGINS),
     mcpAllowPublicBind: allowPublicBind,
+    authAttemptsPerMinute: boundedPositiveInt(env.SERVER_AGENT_AUTH_ATTEMPTS_PER_MINUTE, 30, 'SERVER_AGENT_AUTH_ATTEMPTS_PER_MINUTE', LIMITS.authAttemptsPerMinute),
+    authRequestsPerMinute: boundedPositiveInt(env.SERVER_AGENT_AUTH_REQUESTS_PER_MINUTE, 120, 'SERVER_AGENT_AUTH_REQUESTS_PER_MINUTE', LIMITS.authRequestsPerMinute),
+    auditRetentionDays: boundedPositiveInt(env.SERVER_AGENT_AUDIT_RETENTION_DAYS, 30, 'SERVER_AGENT_AUDIT_RETENTION_DAYS', LIMITS.auditRetentionDays),
   };
 }
