@@ -39,10 +39,11 @@ Protected mutations acquire a per-project durable lease. A second protected muta
 - `get_project`
 - `register_project`
 - `update_project`
+- `enable_project` — re-enables registry state with dedicated state-management permission
 - `disable_project`
 - `remove_project` — archives the registry entry (tombstone) so historical task/job/deployment foreign keys remain valid; project files are never deleted
 
-Archived projects disappear from normal project lookups/lists and their IDs are not silently reusable.
+Archived projects disappear from normal project lookups/lists and their IDs are not silently reusable. Project registration management is field-scoped: root/capability changes require dedicated permissions plus global scope, while commands/database/deployment/state/metadata each have separate management permissions. Project capability lists cannot contain those registry-management permissions.
 
 ### Files
 
@@ -72,7 +73,8 @@ Sensitive credential/config paths are denied by default, including common enviro
 - `job_status`
 - `list_jobs`
 - `cancel_job`
-- `run_validation`
+- `run_validation` — starts durable validation and returns an operation id
+- `validation_operation_status`
 
 Arbitrary shell strings/argv are not accepted. Job stdout/stderr is appended to bounded log files during execution only after secret redaction. The Job tools let the client reconnect and inspect work without blindly rerunning it.
 
@@ -101,7 +103,8 @@ Destructive SQL is blocked from the normal interface. SQLite read queries are it
 
 ### Deployment / health / services / logs
 
-- `deploy`
+- `deploy` — starts durable deployment and returns an operation id
+- `deployment_operation_status`
 - `deployment_status`
 - `health_check`
 - `get_logs`
@@ -110,7 +113,7 @@ Destructive SQL is blocked from the normal interface. SQLite read queries are it
 
 Project service restart is idempotent and lease-guarded in the hardened runtime. Host-level service restart may remain unavailable until a deliberately narrow Linux authorization policy exists; the installer does not grant it automatically.
 
-Deployment and validation themselves are still synchronous orchestration in this group; their conversion to persistent Operations belongs to the next hardening group.
+Deployment and validation run through SQLite-backed persistent Operations. The initiating MCP request returns an operation id; interrupted `RUNNING` operations reconcile to `UNKNOWN` after Agent restart and are never replayed blindly.
 
 ### Recovery / rollback
 
@@ -118,9 +121,10 @@ Deployment and validation themselves are still synchronous orchestration in this
 - `recovery_status`
 - `rollback_plan`
 - `rollback_status`
-- `rollback_execute`
+- `rollback_execute` — starts durable rollback execution
+- `rollback_operation_status`
 
-Recovery is evidence-driven and bounded. Rollback execution requires a previously READY plan and immediate revalidation. Persistent operation conversion for deployment/validation/rollback is intentionally deferred to the next hardening group.
+Recovery is evidence-driven and bounded. Rollback execution requires a previously READY plan, immediate revalidation, exact post-command Git HEAD verification, service verification, and health verification where required. Deployment, validation, and rollback execution are persistent Operations.
 
 ### Diagnostics
 
