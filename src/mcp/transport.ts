@@ -118,10 +118,12 @@ export class McpHttpTransport {
     } catch (error) {
       const safe = safeRemoteError(error);
       const status = error instanceof RateLimitError ? 429 : error instanceof AuthenticationError ? 401 : 403;
-      const extraHeaders = error instanceof AuthenticationError && this.options.authChallenge !== undefined
-        ? { 'www-authenticate': this.options.authChallenge }
-        : {};
-      return this.protocolError(null, status, safe.code, safe.message, safe.data, extraHeaders);
+      const hasOAuthChallenge = error instanceof AuthenticationError && this.options.authChallenge !== undefined;
+      const extraHeaders = hasOAuthChallenge ? { 'www-authenticate': this.options.authChallenge! } : {};
+      const data = hasOAuthChallenge
+        ? { ...safe.data, _meta: { 'mcp/www_authenticate': [this.options.authChallenge!] } }
+        : safe.data;
+      return this.protocolError(null, status, safe.code, safe.message, data, extraHeaders);
     }
 
     let rpc: JsonRpcRequest;
