@@ -2,7 +2,7 @@
 
 Server Agent is a production-safety-focused control layer for operating multiple server projects through a constrained remote MCP interface. ChatGPT remains the reasoning layer; Server Agent provides scoped deterministic tools, durable state, validation, deployment safety, recovery/rollback evidence, and project isolation.
 
-> Status: Phase 5/5 source package. Installation artifacts are prepared, but this repository does not automatically install on or connect to production. GitHub Actions never deploys to production and contains no production credentials.
+> Status: Post-Phase-5 production hardening in progress. Groups 1-5 are merged; Group 6 adds reproducible dependencies, multi-Node CI, and official MCP SDK compatibility. This repository never deploys to production from CI.
 
 ## Implemented
 
@@ -33,14 +33,14 @@ Server Agent is a production-safety-focused control layer for operating multiple
 
 ## Development validation
 
-Requires Node.js 22+; GitHub CI validates with Node.js 24.
+Requires Node.js 22+; GitHub CI validates the full locked build on both Node.js 22 and 24, then runs a separate compatibility smoke against the pinned official `@modelcontextprotocol/client@2.0.0` on protocol `2026-07-28`.
 
 ```bash
-npm install --ignore-scripts
+npm ci --ignore-scripts --no-audit --no-fund
 npm run validate
 ```
 
-`npm run validate` performs dependency validation, lint, strict typecheck, all tests, dedicated security tests, build, secret scan, install-package validation, live loopback MCP smoke test, and idle RSS sanity checking.
+`npm run validate` performs dependency-tree validation, high-severity npm audit, lint, strict typecheck, all tests, dedicated security tests, build, secret scan, install-package validation, live loopback MCP smoke test, and idle RSS sanity checking. CI additionally installs the pinned official MCP TypeScript v2 client without saving it to the product lockfile and exercises modern discovery, `tools/list`, and `tools/call` end-to-end.
 
 ## Installation
 

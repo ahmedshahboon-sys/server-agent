@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ['main', 'phase/**']
+    branches: ['main', 'phase/**', 'hardening/**']
   pull_request:
     branches: ['main']
 
@@ -11,20 +11,27 @@ permissions:
 
 jobs:
   validate:
-    name: Lint, typecheck, tests, build, security, package
+    name: Validate Node ${{ matrix.node }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: '24'
-      - name: Install development dependencies
-        run: npm install --ignore-scripts --no-audit --no-fund --package-lock=false
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install locked development dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Validate dependency tree
         run: npm run deps:validate
+      - name: Dependency security audit
+        run: npm run deps:audit
       - name: Lint
         run: npm run lint
       - name: Typecheck
@@ -43,3 +50,25 @@ jobs:
         run: bash -n install/install.sh install/uninstall.sh
       - name: Runtime and memory sanity
         run: npm run perf:sanity
+
+  mcp-sdk-compat:
+    name: MCP SDK compatibility
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked project dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install pinned official MCP client for compatibility only
+        run: npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund @modelcontextprotocol/client@2.0.0
+      - name: Build Server Agent
+        run: npm run build
+      - name: Run official MCP TypeScript SDK compatibility
+        run: npm run compat:mcp-sdk

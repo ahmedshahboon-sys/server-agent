@@ -38,6 +38,12 @@ Use `npm run auth:admin -- ...` locally on the Server Agent host to list credent
 
 A credential id is immutable token identity. Never overwrite an existing id with different bearer material. If a bootstrap environment token is removed after provisioning, confirm at least one non-expired, non-revoked credential exists first.
 
+## Reproducible dependency and MCP compatibility gate
+
+`package-lock.json` is committed and both development CI and the installation package use `npm ci --ignore-scripts`. GitHub CI runs the full validation suite on Node.js 22 and 24. A separate compatibility job installs the pinned official `@modelcontextprotocol/client@2.0.0` only for testing and verifies the `2026-07-28` modern discovery path, tool listing, and tool invocation against a live loopback Server Agent runtime.
+
+The product remains runtime-dependency-free; the official client is not shipped with Server Agent. This keeps the execution footprint small while continuously detecting protocol drift.
+
 ## Safe upgrade
 
 Before an upgrade:

@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 
 const required = [
+  'package-lock.json',
   'install/install.sh',
   'install/uninstall.sh',
   'install/server-agent.env.example',
@@ -16,7 +17,11 @@ const errors = [];
 for (const file of required) if (!existsSync(file)) errors.push(`missing required install artifact: ${file}`);
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
-if (packageJson.version !== '0.5.0') errors.push('package version must be 0.5.0 for Phase 5');
+const packageLock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+if (packageJson.version !== '0.5.0') errors.push('package version must remain 0.5.0 until the final production-candidate group');
+if (packageLock.lockfileVersion !== 3) errors.push('npm lockfileVersion must be 3');
+if (packageLock.packages?.['']?.version !== packageJson.version) errors.push('package-lock root version must match package.json');
+if (JSON.stringify(packageLock.packages?.['']?.devDependencies ?? {}) !== JSON.stringify(packageJson.devDependencies ?? {})) errors.push('package-lock root devDependencies must match package.json');
 if (packageJson.scripts?.start !== 'node dist/runtime/server-agent.js') errors.push('package start script must launch the hardened runtime entrypoint');
 if (packageJson.dependencies !== undefined && Object.keys(packageJson.dependencies).length > 0) errors.push('runtime dependencies are not expected in the lightweight Phase 5 package');
 
@@ -49,6 +54,8 @@ for (const forbidden of ['nginx','ufw','iptables','firewalld','cloudflared','doc
   if (installer.toLowerCase().includes(forbidden)) errors.push(`installer must not mutate unrelated infrastructure: ${forbidden}`);
 }
 if (!installer.includes('ENABLE_SERVICE=0') || !installer.includes('--enable')) errors.push('installer must default to prepared-but-not-started state');
+if (!installer.includes('"${NPM_BIN}" ci --ignore-scripts')) errors.push('installer must use npm ci against the committed lockfile');
+if (/npm install\b/.test(installer)) errors.push('installer must not use npm install for reproducible package installation');
 if (/rm\s+-rf\b/.test(installer) || /rm\s+-rf\b/.test(uninstaller)) errors.push('install helpers must not recursively delete trees');
 if (!uninstaller.includes('Preserved intentionally')) errors.push('uninstall helper must explicitly preserve state and source data');
 if (!installer.includes('allowed-services') || !installer.includes('server-agent-host-helper.service')) errors.push('installer must provision the empty host allowlist and isolated helper unit');

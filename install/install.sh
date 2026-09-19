@@ -90,9 +90,9 @@ else
 fi
 
 cd "${SOURCE_DIR}"
-"${NPM_BIN}" install --ignore-scripts --no-audit --no-fund --package-lock=false
+"${NPM_BIN}" ci --ignore-scripts --no-audit --no-fund
 "${NPM_BIN}" run validate
-"${NPM_BIN}" prune --omit=dev --ignore-scripts --no-audit --no-fund --package-lock=false
+"${NPM_BIN}" prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 if find "${SOURCE_DIR}" -xdev -user "${AGENT_USER}" -print -quit | grep -q .; then
   echo "Refusing installation: Server Agent runtime/source contains paths owned by service user ${AGENT_USER}." >&2
