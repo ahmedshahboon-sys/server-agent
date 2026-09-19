@@ -24,7 +24,7 @@ http://127.0.0.1:8765/mcp
 Server Agent authentication + project/tool authorization
 ```
 
-The tunnel is transport, not Server Agent authorization. Keep Server Agent bearer authentication enabled even when Cloudflare Access protects the hostname.
+The tunnel is transport, not Server Agent authorization. Keep Server Agent bearer authentication enabled even when Cloudflare Access protects the hostname. Server Agent does not trust Cloudflare identity headers as a replacement for its own credential store.
 
 ## Later tunnel setup principles
 
@@ -50,7 +50,11 @@ A remote MCP request may therefore have two independent authentication layers:
 - outer Cloudflare Access authentication, managed by Cloudflare;
 - inner Server Agent `Authorization: Bearer <agent token>` authentication.
 
-After authentication, every Server Agent tool call still passes tool permission, project scope, registered-project capability, sandbox, output bounds, and operation-specific safety checks.
+After authentication, every Server Agent tool call still passes tool permission, project scope, registered-project capability, sandbox, output bounds, rate limits, and operation-specific safety checks. Different approved clients should receive different Server Agent principal/credential ids so audit and revocation remain independent even when they share the same outer Cloudflare Access application.
+
+## Access identity handling
+
+Cloudflare Access headers/JWTs may be useful at the outer edge, but Group 5 intentionally does not add a second parser that blindly trusts forwarded `CF-*` headers. Only the Cloudflare layer validates Cloudflare credentials. The local Server Agent still authenticates `Authorization: Bearer ...` against its own hashed credential store. This avoids turning a spoofable forwarded header into an inner authorization bypass.
 
 ## No automatic infrastructure changes
 
