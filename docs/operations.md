@@ -28,7 +28,15 @@ The runtime writes structured, redacted process logs to stdout/stderr. Under sys
 journalctl -u server-agent.service --since today --no-pager
 ```
 
-Project log reads exposed through MCP are bounded and project-scoped. MCP audit records store principal/tool/project/result metadata but never tool arguments.
+Project log reads exposed through MCP are bounded and project-scoped. In the production package they pass through the Unix-socket host helper and only exact units from `/etc/server-agent/allowed-services` are readable. MCP audit records store principal/credential/tool/project/result metadata but never tool arguments.
+
+## Authentication operations
+
+Bearer secrets are never stored in SQLite as plaintext. Each credential has a non-secret id, principal id, optional expiry, revoke state, last-used time, and SHA-256 token hash. Authentication events and MCP tool audit are retained for the configured audit window.
+
+Use `npm run auth:admin -- ...` locally on the Server Agent host to list credentials, create an additional principal/credential, rotate a credential, revoke a credential, or enable/disable a principal. Do not expose this CLI through MCP. For rotation, provision the new bearer to the client first, verify it, then retire old client configuration; the CLI already marks the old credential revoked atomically when `rotate` completes.
+
+A credential id is immutable token identity. Never overwrite an existing id with different bearer material. If a bootstrap environment token is removed after provisioning, confirm at least one non-expired, non-revoked credential exists first.
 
 ## Safe upgrade
 
@@ -64,7 +72,7 @@ If database migration state changed or cannot be proven compatible, automatic co
 
 ## Service permissions
 
-The installation package does not grant the `server-agent` Linux user blanket sudo access. Project service restarts may therefore remain unavailable until the operator deliberately configures a narrow OS authorization mechanism. Prefer allowing only exact registered services rather than generic `systemctl` privilege.
+The main `server-agent` Linux user has no blanket sudo and is not added to `systemd-journal`. A dedicated root helper service receives structured requests over a local Unix socket and independently checks `/etc/server-agent/allowed-services` before calling `systemctl` or `journalctl`. Keep that allowlist minimal and root-owned. Removing a unit from the allowlist immediately causes host-level operations for that unit to fail closed on the next request.
 
 ## Uninstall
 
