@@ -160,7 +160,7 @@ export class AuthenticationStore {
     if (Number(result.changes) !== 1) throw new ValidationError('Principal does not exist');
   }
 
-  public authenticate(token: string, now = new Date()): Principal {
+  public verify(token: string, now = new Date()): Principal {
     const hash = bearerTokenHash(token);
     const row = this.db.raw.prepare(
       `SELECT c.credential_id,c.principal_id,c.token_hash,c.expires_at,c.revoked_at,c.last_used_at,
@@ -195,9 +195,20 @@ export class AuthenticationStore {
       permissions,
     };
     validatePrincipal(principal);
+    return principal;
+  }
+
+  public recordSuccessfulUse(principal: Principal, now = new Date()): void {
+    if (principal.credentialId === undefined) throw new ValidationError('Authenticated principal is missing credential id');
     const usedAt = now.toISOString();
-    this.db.raw.prepare('UPDATE auth_credentials SET last_used_at=?,updated_at=? WHERE credential_id=?').run(usedAt, usedAt, row.credential_id);
-    this.audit(row.principal_id, row.credential_id, 'SUCCESS', null, now);
+    this.db.raw.prepare('UPDATE auth_credentials SET last_used_at=?,updated_at=? WHERE credential_id=? AND principal_id=?')
+      .run(usedAt, usedAt, principal.credentialId, principal.id);
+    this.audit(principal.id, principal.credentialId, 'SUCCESS', null, now);
+  }
+
+  public authenticate(token: string, now = new Date()): Principal {
+    const principal = this.verify(token, now);
+    this.recordSuccessfulUse(principal, now);
     return principal;
   }
 
