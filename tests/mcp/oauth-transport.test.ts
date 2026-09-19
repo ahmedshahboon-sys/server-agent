@@ -51,6 +51,8 @@ test('MCP returns OAuth discovery challenge on unauthenticated requests',async()
     const response=await transport.handle(listRequest());
     assert.equal(response.status,401);
     assert.equal(response.headers['www-authenticate'],challenge);
+    const parsed=JSON.parse(response.body);
+    assert.deepEqual(parsed.error.data._meta['mcp/www_authenticate'],[challenge]);
   }finally{db.close();}
 });
 
