@@ -102,7 +102,7 @@ export async function runServerAgent(env: NodeJS.ProcessEnv = process.env): Prom
   if (interruptedTasks > 0 || unknownWorkTasks>0 || reconciledJobs > 0 || reconciledOperations>0 || reclaimedLeases > 0) logger.warn('Recovered interrupted runtime state', { interruptedTasks, unknownWorkTasks, reconciledJobs, reconciledOperations, reclaimedLeases });
   try {
     const maintenanceReport=await maintenance.runStartupMaintenance();
-    logger.info('Startup maintenance completed', maintenanceReport);
+    logger.info('Startup maintenance completed', { ...maintenanceReport });
   } catch (error) {
     logger.warn('Startup maintenance could not complete; service remains available with readiness checks', { error: redactError(error) });
   }
