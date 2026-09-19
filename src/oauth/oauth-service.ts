@@ -67,6 +67,18 @@ function html(status: number, body: string): OAuthHttpResponse { return { status
 function redirect(location: string): OAuthHttpResponse {
   return { status: 302, headers: { location, 'cache-control': 'no-store' }, body: '' };
 }
+function seeOther(location: string): OAuthHttpResponse {
+  return {
+    status: 303,
+    headers: {
+      location,
+      'cache-control': 'no-store',
+      pragma: 'no-cache',
+      'referrer-policy': 'no-referrer',
+    },
+    body: '',
+  };
+}
 function escapeHtml(value: string): string {
   return value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
 }
@@ -233,7 +245,7 @@ export class OAuthService {
     target.searchParams.set('code', code);
     if (state !== '') target.searchParams.set('state', state);
     target.searchParams.set('iss', this.config.issuer);
-    return redirect(target.toString());
+    return seeOther(target.toString());
   }
 
   private validateAuthorizeParams(params: URLSearchParams): { params: URLSearchParams } | { response: OAuthHttpResponse } {
