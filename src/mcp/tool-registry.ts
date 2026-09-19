@@ -29,6 +29,7 @@ export interface ToolRegistration {
   readonly requiresGlobalScope?: boolean;
   readonly skipProjectCapabilityCheck?: boolean;
   readonly mutating?: boolean;
+  readonly taskBacked?: boolean;
   readonly handler: (argumentsValue: Readonly<Record<string, unknown>>, context: ToolCallContext) => Promise<unknown>;
 }
 
@@ -52,6 +53,7 @@ export class McpToolRegistry {
   }
 
   public has(name: string): boolean { return this.registrations.has(name); }
+  public isTaskBacked(name:string):boolean{return this.registrations.get(name)?.taskBacked===true;}
 
   public assertAdditional(principal: Principal, permission: ProjectPermission, projectId?: string, requireGlobalScope = false): void {
     if (requireGlobalScope && !principal.projectScopes.includes('*')) throw new AuthorizationError();
