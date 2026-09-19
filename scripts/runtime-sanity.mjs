@@ -64,7 +64,7 @@ const child = spawn(process.execPath, ['dist/runtime/server-agent.js'], {
     SERVER_AGENT_MCP_PATH: '/mcp',
     SERVER_AGENT_MCP_ALLOW_PUBLIC_BIND: 'false',
     SERVER_AGENT_MCP_PROJECT_SCOPES: '*',
-    SERVER_AGENT_MCP_PERMISSIONS: 'project:read,project:manage,commands:run,recovery:run',
+    SERVER_AGENT_MCP_PERMISSIONS: 'project:read,project:update:state,project:archive,commands:run,recovery:run',
     SERVER_AGENT_MCP_BEARER_TOKEN: token,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -86,9 +86,10 @@ try {
   const listed = await rpc(port, 2, 'tools/list', { _meta: meta });
   if (listed.status !== 200) throw new Error(`tools/list returned HTTP ${listed.status}: ${listed.body.slice(0, 1000)}`);
   const names = new Set((JSON.parse(listed.body).result?.tools ?? []).map((tool) => tool.name));
-  for (const expected of ['list_projects','remove_project','run_command','job_status','recovery_assess','system_snapshot']) {
+  for (const expected of ['list_projects','enable_project','remove_project','run_command','job_status','recovery_assess','system_snapshot']) {
     if (!names.has(expected)) throw new Error(`runtime tools/list is missing ${expected}`);
   }
+  if (names.has('register_project')) throw new Error('runtime tools/list exposed register_project without project:register');
 
   const rss = await rssBytes(child.pid);
   if (rss !== null && rss > 256 * 1024 * 1024) throw new Error(`idle runtime RSS ${rss} exceeds 256 MiB sanity ceiling`);

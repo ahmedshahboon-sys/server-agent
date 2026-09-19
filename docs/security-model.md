@@ -6,6 +6,8 @@ Server Agent is a deterministic safety/execution boundary. ChatGPT or another MC
 
 A remote call must pass authentication, tool permission, principal project scope, and the registered project's own capability list. Projects are isolated by id and canonical root. Cross-project calls fail even when the caller possesses the matching tool permission for another project.
 
+Registry management permissions are separate from runtime project capabilities. The former can register or change configuration; the latter only describe what an already-registered project may expose operationally. `project:manage` is not accepted. Root and capability-list changes require dedicated permissions and global scope. Project configuration is parsed and validated with unknown nested fields rejected before persistence.
+
 ## Filesystem boundary
 
 The sandbox validates canonical paths rather than string prefixes. It rejects traversal, encoded traversal, absolute escapes, null bytes, symlink escapes, and access to sensitive filenames such as `.env`, private keys, credential/secrets files, and authentication-token files.

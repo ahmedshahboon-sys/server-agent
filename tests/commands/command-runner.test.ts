@@ -13,7 +13,7 @@ async function setup(commands: Record<string, readonly string[]>, env: NodeJS.Pr
   const temp = await tempDir('server-agent-command-');
   const db = new SqliteDatabase(':memory:');
   const registry = new ProjectRegistry(db);
-  registry.create(projectFixture({ root: temp.path, permissions:['commands:run'], environmentRefs:['PROJECT_SECRET'], commands:{ allowed: commands } }));
+  registry.create(projectFixture({ root: temp.path, permissions:['commands:run'], database:{adapter:'none',defaultAccess:'read'}, environmentRefs:['PROJECT_SECRET'], commands:{ allowed: commands } }));
   const runner = new RestrictedCommandRunner(registry, new DefaultDenyAuthorizer(), { timeoutMs: 250, maxOutputBytes: 64, environment: env });
   return { temp, db, runner };
 }

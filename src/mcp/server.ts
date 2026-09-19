@@ -15,7 +15,7 @@ export interface ServerAgentMcpServerOptions {
 }
 
 export function createServerAgentMcpServer(options: ServerAgentMcpServerOptions): Server {
-  const registry = new McpToolRegistry(options.authorizer, options.stateDatabase);
+  const registry = new McpToolRegistry(options.authorizer, options.stateDatabase, options.services.projects);
   registerServerAgentTools(registry, options.services);
   const transport = new McpHttpTransport(options.authenticator, registry, options.transport);
   return createMcpNodeServer(transport, options.transport.maxBodyBytes);
