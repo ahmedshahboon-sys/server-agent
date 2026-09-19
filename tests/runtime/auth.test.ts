@@ -19,6 +19,8 @@ test('runtime authentication creates a least-privilege remote principal without 
     SERVER_AGENT_MCP_PERMISSIONS: 'project:read,files:read,commands:run',
   });
   assert.equal(result.token, token);
+  assert.equal(result.credentialId, 'bootstrap-chatgpt');
+  assert.equal(result.expiresAt, null);
   assert.deepEqual(result.principal.projectScopes, ['project-a', 'project-b']);
   assert.deepEqual(result.principal.permissions, ['project:read', 'files:read', 'commands:run']);
   assert.equal(JSON.stringify(result.principal).includes(token), false);
@@ -40,5 +42,24 @@ test('runtime authentication accepts fine-grained management permissions and rej
     SERVER_AGENT_MCP_BEARER_TOKEN: token,
     SERVER_AGENT_MCP_PROJECT_SCOPES: '*',
     SERVER_AGENT_MCP_PERMISSIONS: 'project:manage',
+  }), ValidationError);
+});
+
+test('runtime authentication validates bootstrap credential id and expiry metadata', () => {
+  const result = loadRuntimeAuthentication({
+    SERVER_AGENT_MCP_BEARER_TOKEN: token,
+    SERVER_AGENT_MCP_PRINCIPAL_ID: 'chatgpt-remote',
+    SERVER_AGENT_MCP_CREDENTIAL_ID: 'credential-2026-09',
+    SERVER_AGENT_MCP_CREDENTIAL_EXPIRES_AT: '2026-12-31T23:59:59Z',
+    SERVER_AGENT_MCP_PROJECT_SCOPES: 'project-a',
+    SERVER_AGENT_MCP_PERMISSIONS: 'project:read',
+  });
+  assert.equal(result.credentialId, 'credential-2026-09');
+  assert.equal(result.expiresAt, '2026-12-31T23:59:59.000Z');
+  assert.throws(() => loadRuntimeAuthentication({
+    SERVER_AGENT_MCP_BEARER_TOKEN: token,
+    SERVER_AGENT_MCP_CREDENTIAL_ID: '../bad',
+    SERVER_AGENT_MCP_PROJECT_SCOPES: 'project-a',
+    SERVER_AGENT_MCP_PERMISSIONS: 'project:read',
   }), ValidationError);
 });
