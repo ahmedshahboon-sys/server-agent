@@ -15,6 +15,7 @@ export interface McpToolDefinition {
   readonly description: string;
   readonly inputSchema: JsonSchema;
   readonly outputSchema?: JsonSchema;
+  readonly securitySchemes?: readonly Readonly<Record<string, unknown>>[];
 }
 
 export interface ToolCallContext {
@@ -44,7 +45,13 @@ function derivedIdempotencyKey(context:ToolCallContext,args:Readonly<Record<stri
 export class McpToolRegistry {
   private readonly registrations = new Map<string, ToolRegistration>();
 
-  public constructor(private readonly authorizer: Authorizer, private readonly db?: SqliteDatabase, private readonly projects?: ProjectStore, private readonly mutationGuard?:MutationGuard) {}
+  public constructor(
+    private readonly authorizer: Authorizer,
+    private readonly db?: SqliteDatabase,
+    private readonly projects?: ProjectStore,
+    private readonly mutationGuard?:MutationGuard,
+    private readonly oauthScopes: readonly string[] = [],
+  ) {}
 
   public register(registration: ToolRegistration): void {
     if (!/^[a-z][a-z0-9_]{1,63}$/.test(registration.definition.name)) throw new ValidationError('MCP tool name is invalid');
@@ -64,7 +71,10 @@ export class McpToolRegistry {
     return [...this.registrations.values()]
       .filter((item) => principal.permissions.includes(item.permission))
       .filter((item) => item.requiresGlobalScope !== true || principal.projectScopes.includes('*'))
-      .map((item) => item.definition)
+      .map((item) => this.oauthScopes.length === 0 ? item.definition : {
+        ...item.definition,
+        securitySchemes: [{ type: 'oauth2', scopes: this.oauthScopes }],
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
