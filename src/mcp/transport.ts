@@ -206,7 +206,21 @@ export class McpHttpTransport {
     data: Readonly<Record<string, unknown>> = {},
     extraHeaders: Readonly<Record<string, string>> = {},
   ): McpHttpResponse {
-    const base = json(status, { jsonrpc: '2.0', id, error: { code, message, data: safeRemoteValue(data) } });
+    let safeData = safeRemoteValue(data) as Readonly<Record<string, unknown>>;
+    const sourceMeta = data['_meta'];
+    if (
+      this.options.authChallenge !== undefined &&
+      sourceMeta !== null &&
+      typeof sourceMeta === 'object' &&
+      !Array.isArray(sourceMeta) &&
+      Array.isArray((sourceMeta as Record<string, unknown>)['mcp/www_authenticate'])
+    ) {
+      safeData = {
+        ...safeData,
+        _meta: { 'mcp/www_authenticate': [this.options.authChallenge] },
+      };
+    }
+    const base = json(status, { jsonrpc: '2.0', id, error: { code, message, data: safeData } });
     return { ...base, headers: { ...base.headers, ...extraHeaders } };
   }
 }
