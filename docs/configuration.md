@@ -57,6 +57,26 @@ Start with read-oriented permissions and explicit project ids. The shipped envir
 
 On first successful startup, the bootstrap bearer is hashed with SHA-256 and stored with its credential id, principal, expiry, revoke state, and last-used timestamp. A restart with the same credential id but different token fails closed; rotation must use a new credential id. Once at least one usable credential exists in SQLite, the bootstrap token may be removed from the environment. Use the local `auth:admin` CLI for additional principals, rotation, revoke, enable/disable, and credential listing. Bearer tokens are shown only when newly created or rotated.
 
+
+## ChatGPT OAuth
+
+OAuth is disabled by default and is additive to the existing bearer credential store. When enabled, the MCP endpoint remains on loopback behind the chosen HTTPS tunnel/reverse transport.
+
+| Variable | Default / guidance |
+|---|---|
+| `SERVER_AGENT_OAUTH_ENABLED` | `false`; must be explicitly enabled |
+| `SERVER_AGENT_PUBLIC_BASE_URL` | required HTTPS origin when OAuth is enabled, for example `https://agent.example.com` |
+| `SERVER_AGENT_OAUTH_OWNER_SECRET` | required 32-4096 character operator secret; keep only in the root-owned environment file |
+| `SERVER_AGENT_OAUTH_PRINCIPAL_ID` | `chatgpt-oauth` |
+| `SERVER_AGENT_OAUTH_PROJECT_SCOPES` | explicit project ids only; global `*` is rejected |
+| `SERVER_AGENT_OAUTH_PERMISSIONS` | read-oriented permissions only; mutating permissions are rejected by configuration validation |
+| `SERVER_AGENT_OAUTH_SCOPE` | `mcp:read` |
+| `SERVER_AGENT_OAUTH_ALLOWED_REDIRECT_ORIGINS` | `https://chatgpt.com`; comma-separated exact origins |
+| `SERVER_AGENT_OAUTH_ACCESS_TOKEN_TTL_SECONDS` | `3600` |
+| `SERVER_AGENT_OAUTH_REFRESH_TOKEN_TTL_SECONDS` | `2592000` |
+
+The OAuth provider publishes RFC 9728 protected-resource metadata and RFC 8414 authorization-server metadata, supports DCR public clients, requires PKCE S256, returns the RFC 9207 issuer parameter, and rotates refresh tokens. See `docs/chatgpt-oauth.md`.
+
 ## Host helper
 
 `SERVER_AGENT_HOST_HELPER_SOCKET=/run/server-agent-host/hostctl.sock` routes systemd status/restart and project journal reads to the isolated root helper service. The helper accepts only structured requests for exact `.service` names present in `/etc/server-agent/allowed-services`. The main Agent never receives root, sudo, or broad journal-group membership.
