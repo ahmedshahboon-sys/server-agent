@@ -51,6 +51,11 @@ export class McpToolRegistry {
 
   public has(name: string): boolean { return this.registrations.has(name); }
 
+  public assertAdditional(principal: Principal, permission: ProjectPermission, projectId?: string, requireGlobalScope = false): void {
+    if (requireGlobalScope && !principal.projectScopes.includes('*')) throw new AuthorizationError();
+    this.authorizer.assertAllowed(principal, permission, projectId);
+  }
+
   public list(principal: Principal): readonly McpToolDefinition[] {
     return [...this.registrations.values()]
       .filter((item) => principal.permissions.includes(item.permission))
