@@ -77,6 +77,7 @@ test('OAuth service exposes discovery, DCR, PKCE code exchange, refresh, and bou
     assert.equal(metadata.issuer,base);
     assert.equal(metadata.authorization_response_iss_parameter_supported,true);
     assert.deepEqual(metadata.code_challenge_methods_supported,['S256']);
+    assert.deepEqual(metadata.scopes_supported,['mcp:read','offline_access']);
     assert.equal(metadata.registration_endpoint,`${base}/oauth/register`);
 
     const badRegister=oauth.handle(request('POST','/oauth/register',JSON.stringify({
@@ -106,7 +107,7 @@ test('OAuth service exposes discovery, DCR, PKCE code exchange, refresh, and bou
       state:'state-1',
       code_challenge:challenge,
       code_challenge_method:'S256',
-      scope:'mcp:read',
+      scope:'mcp:read offline_access',
       resource:base,
     });
 
@@ -144,8 +145,32 @@ test('OAuth service exposes discovery, DCR, PKCE code exchange, refresh, and bou
     const tokens=JSON.parse(tokenResponse?.body??'{}') as {access_token:string;refresh_token:string;scope:string;expires_in:number};
     assert.match(tokens.access_token,/^sa_oauth_/);
     assert.match(tokens.refresh_token,/^sa_refresh_/);
-    assert.equal(tokens.scope,'mcp:read');
+    assert.equal(tokens.scope,'mcp:read offline_access');
     assert.equal(tokens.expires_in,3600);
+
+
+    const noOfflineParams=new URLSearchParams(params);
+    noOfflineParams.set('scope','mcp:read');
+    noOfflineParams.set('state','state-no-offline');
+    const noOfflineApproved=new URLSearchParams(noOfflineParams);
+    noOfflineApproved.set('owner_secret',ownerSecret);
+    const noOfflineAuthorization=oauth.handle(request('POST','/oauth/authorize',noOfflineApproved.toString(),{'content-type':'application/x-www-form-urlencoded'}));
+    assert.equal(noOfflineAuthorization?.status,302);
+    const noOfflineLocation=new URL(noOfflineAuthorization?.headers.location??'');
+    const noOfflineCode=noOfflineLocation.searchParams.get('code')??'';
+    const noOfflineTokenBody=new URLSearchParams({
+      grant_type:'authorization_code',
+      code:noOfflineCode,
+      client_id:clientId,
+      redirect_uri:redirectUri,
+      code_verifier:verifier,
+      resource:base,
+    });
+    const noOfflineTokenResponse=oauth.handle(request('POST','/oauth/token',noOfflineTokenBody.toString(),{'content-type':'application/x-www-form-urlencoded'}));
+    assert.equal(noOfflineTokenResponse?.status,200);
+    const noOfflineTokens=JSON.parse(noOfflineTokenResponse?.body??'{}') as {access_token:string;refresh_token?:string;scope:string};
+    assert.equal(noOfflineTokens.scope,'mcp:read');
+    assert.equal(noOfflineTokens.refresh_token,undefined);
 
     const principal=authStore.authenticate(tokens.access_token);
     assert.equal(principal.id,'chatgpt-oauth');
