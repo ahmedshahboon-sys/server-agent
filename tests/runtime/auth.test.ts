@@ -28,3 +28,17 @@ test('runtime authentication rejects unknown permissions and malformed scopes', 
   assert.throws(() => loadRuntimeAuthentication({ SERVER_AGENT_MCP_BEARER_TOKEN: token, SERVER_AGENT_MCP_PROJECT_SCOPES: '*', SERVER_AGENT_MCP_PERMISSIONS: 'root:shell' }), ValidationError);
   assert.throws(() => loadRuntimeAuthentication({ SERVER_AGENT_MCP_BEARER_TOKEN: token, SERVER_AGENT_MCP_PROJECT_SCOPES: '../escape', SERVER_AGENT_MCP_PERMISSIONS: 'project:read' }), ValidationError);
 });
+
+test('runtime authentication accepts fine-grained management permissions and rejects removed broad project:manage', () => {
+  const result = loadRuntimeAuthentication({
+    SERVER_AGENT_MCP_BEARER_TOKEN: token,
+    SERVER_AGENT_MCP_PROJECT_SCOPES: '*',
+    SERVER_AGENT_MCP_PERMISSIONS: 'project:read,project:update:commands,project:update:root',
+  });
+  assert.deepEqual(result.principal.permissions, ['project:read','project:update:commands','project:update:root']);
+  assert.throws(() => loadRuntimeAuthentication({
+    SERVER_AGENT_MCP_BEARER_TOKEN: token,
+    SERVER_AGENT_MCP_PROJECT_SCOPES: '*',
+    SERVER_AGENT_MCP_PERMISSIONS: 'project:manage',
+  }), ValidationError);
+});
