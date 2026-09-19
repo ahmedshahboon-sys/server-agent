@@ -2,7 +2,7 @@
 
 Server Agent is a production-safety-focused control layer for operating multiple server projects through a constrained remote MCP interface. ChatGPT remains the reasoning layer; Server Agent provides scoped deterministic tools, durable state, validation, deployment safety, recovery/rollback evidence, and project isolation.
 
-> Status: Post-Phase-5 production hardening in progress. Groups 1-5 are merged; Group 6 adds reproducible dependencies, multi-Node CI, and official MCP SDK compatibility. This repository never deploys to production from CI.
+> Status: Final production hardening candidate. Groups 1-6 are merged; Group 7 adds retention/disk guards, maintenance mode, self-health/readiness, MCP Tasks extension support, schema-upgrade coverage, and the final production gate. This repository never deploys to production from CI.
 
 ## Implemented
 

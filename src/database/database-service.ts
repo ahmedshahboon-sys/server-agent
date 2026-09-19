@@ -8,6 +8,7 @@ import { ProjectPathSandbox } from '../security/sandbox.js';
 import { currentIdempotencyKey } from '../idempotency/context.js';
 import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from '../operations/operation-lease.js';
+import type { MutationGuard } from '../maintenance/maintenance-service.js';
 import type { SqliteDatabase } from './sqlite.js';
 import type { DatabaseAdapter, DatabaseParameter, DatabaseQueryRequest, DatabaseQueryResult, DatabaseSchemaResult, DatabaseMigrationStatus, DatabaseStatusResult } from './adapter.js';
 import { SqliteProjectAdapter } from './sqlite-adapter.js';
@@ -24,6 +25,7 @@ export interface DatabaseMutationSafety {
   readonly leases?: OperationLeaseStore;
   readonly ownerId?: string;
   readonly leaseTtlMs?: number;
+  readonly mutationGuard?: MutationGuard;
 }
 
 export interface DatabaseAdapterFactory {
@@ -112,6 +114,7 @@ export class DatabaseService {
   }
 
   private async guardedWrite<T>(projectId:string,operation:string,key:string|undefined,fingerprint:string,run:()=>Promise<T>):Promise<T>{
+    this.mutationSafety.mutationGuard?.assertMutationAllowed(undefined,this.options.maxResultBytes);
     const store=this.mutationSafety.idempotency;
     if(store===undefined)return run();
     const effectiveKey=key??currentIdempotencyKey();

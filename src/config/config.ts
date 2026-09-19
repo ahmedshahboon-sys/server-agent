@@ -26,6 +26,11 @@ export interface ServerAgentConfig {
   readonly authAttemptsPerMinute: number;
   readonly authRequestsPerMinute: number;
   readonly auditRetentionDays: number;
+  readonly operationalRetentionDays: number;
+  readonly jobLogRetentionDays: number;
+  readonly minFreeDiskBytes: number;
+  readonly stateDbWarningBytes: number;
+  readonly maintenanceMode: boolean;
 }
 
 const LOG_LEVELS = new Set<LogLevel>(['debug', 'info', 'warn', 'error']);
@@ -46,6 +51,10 @@ const LIMITS = {
   authAttemptsPerMinute: 10_000,
   authRequestsPerMinute: 100_000,
   auditRetentionDays: 3650,
+  operationalRetentionDays: 3650,
+  jobLogRetentionDays: 3650,
+  minFreeDiskBytes: 17_179_869_184,
+  stateDbWarningBytes: 17_179_869_184,
 } as const;
 
 function boundedPositiveInt(value: string | undefined, fallback: number, name: string, maximum: number): number {
@@ -123,5 +132,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerAgentCon
     authAttemptsPerMinute: boundedPositiveInt(env.SERVER_AGENT_AUTH_ATTEMPTS_PER_MINUTE, 30, 'SERVER_AGENT_AUTH_ATTEMPTS_PER_MINUTE', LIMITS.authAttemptsPerMinute),
     authRequestsPerMinute: boundedPositiveInt(env.SERVER_AGENT_AUTH_REQUESTS_PER_MINUTE, 120, 'SERVER_AGENT_AUTH_REQUESTS_PER_MINUTE', LIMITS.authRequestsPerMinute),
     auditRetentionDays: boundedPositiveInt(env.SERVER_AGENT_AUDIT_RETENTION_DAYS, 30, 'SERVER_AGENT_AUDIT_RETENTION_DAYS', LIMITS.auditRetentionDays),
+    operationalRetentionDays: boundedPositiveInt(env.SERVER_AGENT_OPERATIONAL_RETENTION_DAYS, 30, 'SERVER_AGENT_OPERATIONAL_RETENTION_DAYS', LIMITS.operationalRetentionDays),
+    jobLogRetentionDays: boundedPositiveInt(env.SERVER_AGENT_JOB_LOG_RETENTION_DAYS, 14, 'SERVER_AGENT_JOB_LOG_RETENTION_DAYS', LIMITS.jobLogRetentionDays),
+    minFreeDiskBytes: boundedPositiveInt(env.SERVER_AGENT_MIN_FREE_DISK_BYTES, 268_435_456, 'SERVER_AGENT_MIN_FREE_DISK_BYTES', LIMITS.minFreeDiskBytes),
+    stateDbWarningBytes: boundedPositiveInt(env.SERVER_AGENT_STATE_DB_WARNING_BYTES, 536_870_912, 'SERVER_AGENT_STATE_DB_WARNING_BYTES', LIMITS.stateDbWarningBytes),
+    maintenanceMode: strictBoolean(env.SERVER_AGENT_MAINTENANCE_MODE, false, 'SERVER_AGENT_MAINTENANCE_MODE'),
   };
 }

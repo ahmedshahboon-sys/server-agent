@@ -1,6 +1,6 @@
-# Phase 5 final validation model
+# Final production-candidate validation model
 
-This repository is considered ready for installation only when the Phase 5 branch and merged `main` both pass the complete validation pipeline on a clean GitHub-hosted Ubuntu runner.
+This repository is considered ready for operator-controlled installation only when the final hardening branch, its pull request, and merged `main` all pass the complete validation pipeline on clean GitHub-hosted Ubuntu runners.
 
 ## Required validation gates
 
@@ -13,6 +13,12 @@ This repository is considered ready for installation only when the Phase 5 branc
 - install-package structural validation;
 - shell syntax validation for install/uninstall helpers;
 - runtime smoke test using a temporary loopback MCP server;
+- `/healthz` liveness and `/readyz` readiness checks;
+- state-schema migration test from v7 to v8;
+- maintenance/retention and low-disk fail-closed regression tests;
+- modern MCP Tasks extension negotiation/routing regression tests;
+- official MCP TypeScript SDK v2 compatibility smoke;
+- full validation on Node.js 22 and 24;
 - idle RSS sanity check;
 - post-merge CI on `main`.
 
@@ -46,7 +52,11 @@ The runtime smoke check treats 256 MiB idle RSS as a generous CI sanity ceiling 
 - destructive SQL is not part of the normal query interface;
 - deployment and rollback require checkpoints/evidence/health checks;
 - recovery and fix attempts are bounded;
-- CI contains no production credentials and never connects to production.
+- CI contains no production credentials and never connects to production;
+- maintenance mode blocks mutating MCP operations while preserving read/diagnostic access;
+- mutating work fails closed when configured free-disk headroom is unavailable;
+- startup maintenance prunes bounded stale telemetry/job-log files and checkpoints SQLite WAL without deleting deployment/rollback evidence required for recovery;
+- MCP Tasks extension is opt-in through `io.modelcontextprotocol/tasks`; task follow-up requests require `Mcp-Name` equal to `taskId`; cancellation is cooperative and never blindly kills safety-critical deploy/rollback work.
 
 ## Installation-package checklist
 

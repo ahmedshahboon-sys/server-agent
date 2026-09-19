@@ -42,6 +42,21 @@ async function rpc(port, id, method, params) {
   });
 }
 
+async function getJson(port, route) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({ hostname: '127.0.0.1', port, path: route, method: 'GET' }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        resolve({ status: response.statusCode ?? 0, body, json: JSON.parse(body) });
+      });
+    });
+    request.once('error', reject);
+    request.end();
+  });
+}
+
 async function rssBytes(pid) {
   if (process.platform !== 'linux') return null;
   const status = await readFile(`/proc/${pid}/status`, 'utf8');
@@ -83,6 +98,11 @@ try {
   const parsedDiscovery = JSON.parse(discovery.body);
   if (!parsedDiscovery.result?.supportedVersions?.includes(protocolVersion)) throw new Error('runtime discovery did not advertise the expected MCP protocol');
 
+  const healthz = await getJson(port, '/healthz');
+  if (healthz.status !== 200 || healthz.json?.live !== true) throw new Error(`/healthz failed: HTTP ${healthz.status} ${healthz.body.slice(0, 500)}`);
+  const readyz = await getJson(port, '/readyz');
+  if (readyz.status !== 200 || readyz.json?.ready !== true) throw new Error(`/readyz failed: HTTP ${readyz.status} ${readyz.body.slice(0, 500)}`);
+
   const listed = await rpc(port, 2, 'tools/list', { _meta: meta });
   if (listed.status !== 200) throw new Error(`tools/list returned HTTP ${listed.status}: ${listed.body.slice(0, 1000)}`);
   const names = new Set((JSON.parse(listed.body).result?.tools ?? []).map((tool) => tool.name));
@@ -94,7 +114,7 @@ try {
   const rss = await rssBytes(child.pid);
   if (rss !== null && rss > 256 * 1024 * 1024) throw new Error(`idle runtime RSS ${rss} exceeds 256 MiB sanity ceiling`);
   if (!stdout.includes('Server Agent MCP listening')) throw new Error('runtime did not emit its safe readiness log');
-  console.log(`Runtime sanity passed (discover=200, tools=${names.size}${rss === null ? '' : `, rssMiB=${(rss / 1024 / 1024).toFixed(1)}`}).`);
+  console.log(`Runtime sanity passed (discover=200, healthz=200, readyz=200, tools=${names.size}${rss === null ? '' : `, rssMiB=${(rss / 1024 / 1024).toFixed(1)}`}).`);
 } finally {
   if (child.exitCode === null) child.kill('SIGTERM');
   for (let attempt = 0; attempt < 50 && child.exitCode === null; attempt += 1) await sleep(100);

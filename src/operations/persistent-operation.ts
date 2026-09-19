@@ -5,8 +5,9 @@ import { currentIdempotencyKey } from '../idempotency/context.js';
 import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from './operation-lease.js';
 import { redactError, redactValue } from '../security/redaction.js';
+import type { MutationGuard } from '../maintenance/maintenance-service.js';
 
-export type PersistentOperationType = 'VALIDATION' | 'DEPLOYMENT' | 'ROLLBACK';
+export type PersistentOperationType = 'VALIDATION' | 'DEPLOYMENT' | 'ROLLBACK' | 'RECOVERY';
 export type PersistentOperationStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
 
 export interface PersistentOperationRecord {
@@ -19,6 +20,7 @@ export interface PersistentOperationRecord {
   readonly createdAt: string;
   readonly startedAt: string;
   readonly finishedAt: string | null;
+  readonly cancelRequestedAt: string | null;
   readonly result: unknown;
   readonly error: unknown;
 }
@@ -32,13 +34,13 @@ export interface PersistentOperationResult {
 
 type Row = {
   operation_id:string;task_id:string;project_id:string;operation_type:PersistentOperationType;status:PersistentOperationStatus;
-  target_id:string|null;created_at:string;started_at:string;finished_at:string|null;result_json:string|null;error_json:string|null;
+  target_id:string|null;created_at:string;started_at:string;finished_at:string|null;cancel_requested_at:string|null;result_json:string|null;error_json:string|null;
 };
 
 function parse(value:string|null):unknown{return value===null?null:JSON.parse(value) as unknown;}
 function map(row:Row):PersistentOperationRecord{return{
   operationId:row.operation_id,taskId:row.task_id,projectId:row.project_id,type:row.operation_type,status:row.status,targetId:row.target_id,
-  createdAt:row.created_at,startedAt:row.started_at,finishedAt:row.finished_at,result:parse(row.result_json),error:parse(row.error_json),
+  createdAt:row.created_at,startedAt:row.started_at,finishedAt:row.finished_at,cancelRequestedAt:row.cancel_requested_at,result:parse(row.result_json),error:parse(row.error_json),
 };}
 
 export class PersistentOperationManager {
@@ -51,6 +53,7 @@ export class PersistentOperationManager {
     private readonly leases:OperationLeaseStore,
     private readonly instanceId:string,
     private readonly leaseTtlMs=60_000,
+    private readonly mutationGuard?:MutationGuard,
   ) {
     if(!Number.isInteger(leaseTtlMs)||leaseTtlMs<5_000||leaseTtlMs>86_400_000)throw new ValidationError('Persistent operation lease TTL must be between 5 seconds and 24 hours');
   }
@@ -75,6 +78,7 @@ export class PersistentOperationManager {
     idempotencyKey?:string,
   ):PersistentOperationRecord{
     if(this.shuttingDown)throw new ConflictError('Agent is shutting down and cannot start a persistent operation');
+    this.mutationGuard?.assertMutationAllowed(undefined,1_048_576);
     if(projectId.trim()===''||taskId.trim()==='')throw new ValidationError('Persistent operation project and task ids are required');
     const effectiveKey=idempotencyKey??currentIdempotencyKey();
     if(effectiveKey===undefined||effectiveKey.trim()==='')throw new ValidationError('idempotency_key is required for persistent operations');
@@ -108,6 +112,15 @@ export class PersistentOperationManager {
       if(record?.status==='IN_PROGRESS')this.idempotency.fail(scope,effectiveKey,redactError(error));
       throw error;
     }
+  }
+
+  public requestCancellation(operationId:string):PersistentOperationRecord{
+    const current=this.getRequired(operationId);
+    if(current.status==='RUNNING'&&current.cancelRequestedAt===null){
+      this.db.raw.prepare('UPDATE persistent_operations SET cancel_requested_at=? WHERE operation_id=? AND status=? AND cancel_requested_at IS NULL')
+        .run(new Date().toISOString(),operationId,'RUNNING');
+    }
+    return this.getRequired(operationId);
   }
 
   public hasBlockingTaskOperation(taskId:string):boolean{
