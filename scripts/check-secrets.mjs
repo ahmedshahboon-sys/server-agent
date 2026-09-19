@@ -14,7 +14,7 @@ const forbiddenContent = [
   /\bcfast_[A-Za-z0-9_-]{32,}\b/,
   /\b(?:CLOUDFLARE_API_TOKEN|SSH_PRIVATE_KEY|PRODUCTION_DB_URL)\s*=\s*\S+/,
   /\bSERVER_AGENT_MCP_BEARER_TOKEN\s*=\s*(?!CHANGE_ME_)[^\s<${}]+/,
-  /\bSERVER_AGENT_OAUTH_OWNER_SECRET\s*=\s*[^\s<${}]+/,
+  /^\s*SERVER_AGENT_OAUTH_OWNER_SECRET\s*=\s*(?!$)[^\s<${}#]+/m,
 ];
 
 const errors = [];
