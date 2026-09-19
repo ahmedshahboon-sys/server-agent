@@ -24,6 +24,11 @@ export interface McpHttpResponse {
   readonly body: string;
 }
 
+export interface NodeHealthProvider {
+  liveness(): Readonly<Record<string, unknown>>;
+  readiness(): Readonly<Record<string, unknown>>;
+}
+
 export interface McpTransportOptions {
   readonly path: string;
   readonly maxBodyBytes: number;
@@ -188,9 +193,19 @@ function write(response: ServerResponse, result: McpHttpResponse): void {
   response.end(result.body);
 }
 
-export function createMcpNodeServer(transport: McpHttpTransport, maxBodyBytes: number): Server {
+export function createMcpNodeServer(transport: McpHttpTransport, maxBodyBytes: number, health?: NodeHealthProvider): Server {
   return http.createServer(async (request, response) => {
     try {
+      const requestPath=(request.url ?? '/').split('?')[0] ?? '/';
+      if (request.method === 'GET' && requestPath === '/healthz' && health !== undefined) {
+        write(response, json(200, health.liveness()));
+        return;
+      }
+      if (request.method === 'GET' && requestPath === '/readyz' && health !== undefined) {
+        const readiness=health.readiness();
+        write(response, json(readiness['ready'] === true ? 200 : 503, readiness));
+        return;
+      }
       const body = await readBody(request, maxBodyBytes);
       const result = await transport.handle({ method: request.method ?? 'GET', path: request.url ?? '/', headers: headers(request), body, ...(request.socket.remoteAddress === undefined ? {} : { remoteAddress: request.socket.remoteAddress }) });
       write(response, result);
