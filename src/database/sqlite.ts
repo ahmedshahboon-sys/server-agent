@@ -267,6 +267,51 @@ const BASE_MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_persistent_operations_status ON persistent_operations(status);
     `,
   },
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE IF NOT EXISTS auth_principals (
+        principal_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        project_scopes_json TEXT NOT NULL,
+        permissions_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS auth_credentials (
+        credential_id TEXT PRIMARY KEY,
+        principal_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT,
+        revoked_at TEXT,
+        last_used_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(principal_id) REFERENCES auth_principals(principal_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_credentials_principal ON auth_credentials(principal_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_auth_credentials_expiry ON auth_credentials(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_auth_credentials_revoked ON auth_credentials(revoked_at);
+
+      CREATE TABLE IF NOT EXISTS auth_audit (
+        audit_id TEXT PRIMARY KEY,
+        principal_id TEXT,
+        credential_id TEXT,
+        outcome TEXT NOT NULL,
+        reason TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(principal_id) REFERENCES auth_principals(principal_id),
+        FOREIGN KEY(credential_id) REFERENCES auth_credentials(credential_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_audit_time ON auth_audit(created_at);
+      CREATE INDEX IF NOT EXISTS idx_auth_audit_principal ON auth_audit(principal_id, created_at);
+
+      ALTER TABLE mcp_audit ADD COLUMN credential_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_mcp_audit_credential ON mcp_audit(credential_id, created_at);
+    `,
+  },
 ] as const;
 
 export class SqliteDatabase {
