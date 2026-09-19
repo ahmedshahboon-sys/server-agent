@@ -5,6 +5,7 @@ import { AuthorizationError, ValidationError } from '../core/errors.js';
 import type { SqliteDatabase } from '../database/sqlite.js';
 import { withIdempotencyKey } from '../idempotency/context.js';
 import { redactError, redactValue } from '../security/redaction.js';
+import type { MutationGuard } from '../maintenance/maintenance-service.js';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
 
@@ -27,6 +28,7 @@ export interface ToolRegistration {
   readonly projectArgument?: string;
   readonly requiresGlobalScope?: boolean;
   readonly skipProjectCapabilityCheck?: boolean;
+  readonly mutating?: boolean;
   readonly handler: (argumentsValue: Readonly<Record<string, unknown>>, context: ToolCallContext) => Promise<unknown>;
 }
 
@@ -41,7 +43,7 @@ function derivedIdempotencyKey(context:ToolCallContext,args:Readonly<Record<stri
 export class McpToolRegistry {
   private readonly registrations = new Map<string, ToolRegistration>();
 
-  public constructor(private readonly authorizer: Authorizer, private readonly db?: SqliteDatabase, private readonly projects?: ProjectStore) {}
+  public constructor(private readonly authorizer: Authorizer, private readonly db?: SqliteDatabase, private readonly projects?: ProjectStore, private readonly mutationGuard?:MutationGuard) {}
 
   public register(registration: ToolRegistration): void {
     if (!/^[a-z][a-z0-9_]{1,63}$/.test(registration.definition.name)) throw new ValidationError('MCP tool name is invalid');
@@ -82,6 +84,7 @@ export class McpToolRegistry {
         if (project === null || !project.enabled) throw new ValidationError('Project is not available');
         if (!project.permissions.includes(registration.permission)) throw new AuthorizationError(`Project does not permit ${registration.permission}`);
       }
+      if (registration.mutating === true) this.mutationGuard?.assertMutationAllowed();
       const key=derivedIdempotencyKey(context,args);
       const result = await withIdempotencyKey(key,()=>registration.handler(args, context));
       this.audit(context, name, projectId, true, null);
