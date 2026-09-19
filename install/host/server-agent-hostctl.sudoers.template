@@ -1,2 +1,0 @@
-# Rendered by install/install.sh. Grants no shell, systemctl, journalctl, or arbitrary sudo command.
-@@USER@@ ALL=(root) NOPASSWD: @@HOSTCTL@@ *
