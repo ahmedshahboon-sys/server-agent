@@ -6,6 +6,7 @@ import { McpToolRegistry } from './tool-registry.js';
 import { createMcpNodeServer, McpHttpTransport, type McpTransportOptions, type NodeHealthProvider } from './transport.js';
 import { registerServerAgentTools, type ServerAgentMcpServices } from './tools/register-tools.js';
 import type { MutationGuard } from '../maintenance/maintenance-service.js';
+import { McpTasksExtension } from './tasks-extension.js';
 
 export interface ServerAgentMcpServerOptions {
   readonly authorizer: Authorizer;
@@ -20,6 +21,7 @@ export interface ServerAgentMcpServerOptions {
 export function createServerAgentMcpServer(options: ServerAgentMcpServerOptions): Server {
   const registry = new McpToolRegistry(options.authorizer, options.stateDatabase, options.services.projects, options.mutationGuard);
   registerServerAgentTools(registry, options.services);
-  const transport = new McpHttpTransport(options.authenticator, registry, options.transport);
+  const tasks = new McpTasksExtension(options.services.operations, options.services.projects, options.authorizer);
+  const transport = new McpHttpTransport(options.authenticator, registry, options.transport, tasks);
   return createMcpNodeServer(transport, options.transport.maxBodyBytes, options.health);
 }
