@@ -26,6 +26,12 @@ Secret-like keys/strings, private keys, bearer tokens, credential URLs, and expl
 
 Repository CI scans tracked non-test source for common credential material, including GitHub/OpenAI-style tokens, private keys, Cloudflare tunnel token patterns, production credential assignments, and real Server Agent bearer-token assignments.
 
+## Persistent authentication and audit
+
+Remote credentials are multi-principal and multi-token. SQLite stores only SHA-256 bearer hashes plus non-secret credential ids, principal scopes/permissions, optional expiry, revoke state, created/updated times, and last-used time. Rotation creates a new credential id and revokes the old credential atomically. Revoked, expired, disabled-principal, or unknown credentials fail closed.
+
+Authentication attempts are bounded per remote address and authenticated requests are bounded per principal. Rate-limited requests return HTTP 429. Authentication audit records outcome/principal/credential metadata without bearer material; MCP audit additionally records the non-secret credential id. Both authentication and MCP audit tables are pruned by a configured retention window at startup.
+
 ## MCP boundary
 
 The executable runtime binds to loopback by default. A non-loopback bind is rejected unless `SERVER_AGENT_MCP_ALLOW_PUBLIC_BIND=true` is explicitly configured.
@@ -50,4 +56,8 @@ Recovery collects evidence and uses bounded attempts. It never invents code fixe
 
 ## Host privilege boundary
 
-The packaged systemd service runs as a dedicated non-root user with `NoNewPrivileges` and an empty Linux capability bounding set. The installer does not create blanket sudo, firewall, Nginx, DNS, Cloudflare, or project permissions. Any ability to restart another project service must be granted later through an explicitly narrow host policy.
+The main service runs as a dedicated non-root user with `NoNewPrivileges`, an empty Linux capability bounding set, `ProtectHome=true`, restrictive umask, and additional kernel/host protections. The installer refuses a runtime tree owned by the service user or group/world-writable runtime paths.
+
+System service status/restart and project journal reads do not use blanket sudo and do not add the service user to `systemd-journal`. A separate root helper listens only on a local Unix socket, has no IP networking, reads an exact root-owned service allowlist, and accepts only `status`, `restart`, or bounded `logs` requests for allowlisted `.service` units. The helper itself uses `ProtectSystem=strict`, `NoNewPrivileges`, an empty capability bounding set, and `RestrictAddressFamilies=AF_UNIX`.
+
+The installer still does not modify firewall, Nginx, DNS, Cloudflare, or registered projects.
