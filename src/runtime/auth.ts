@@ -1,16 +1,11 @@
 import type { Principal, ProjectPermission } from '../core/types.js';
 import { AuthenticationError, ValidationError } from '../core/errors.js';
+import { PROJECT_PERMISSION_SET } from '../security/permissions.js';
 
 export interface RuntimeAuthentication {
   readonly token: string;
   readonly principal: Principal;
 }
-
-const PROJECT_PERMISSIONS = new Set<ProjectPermission>([
-  'project:read','project:register','project:update:metadata','project:update:state','project:update:root','project:update:commands','project:update:database','project:update:deployment','project:update:capabilities','project:disable','project:archive','files:read','files:write','git:read','git:write','commands:run','tasks:read','tasks:write',
-  'database:read','database:write','deploy:read','deploy:run','health:read','logs:read','service:read','service:restart',
-  'recovery:read','recovery:run','rollback:read','rollback:run',
-]);
 
 function csv(value: string | undefined, name: string): readonly string[] {
   if (value === undefined || value.trim() === '') throw new ValidationError(`${name} is required`);
@@ -30,7 +25,7 @@ function projectScopes(value: string | undefined): readonly string[] {
 function permissions(value: string | undefined): readonly ProjectPermission[] {
   const entries = csv(value, 'SERVER_AGENT_MCP_PERMISSIONS');
   for (const entry of entries) {
-    if (!PROJECT_PERMISSIONS.has(entry as ProjectPermission)) throw new ValidationError(`Unknown MCP permission ${entry}`);
+    if (!PROJECT_PERMISSION_SET.has(entry as ProjectPermission)) throw new ValidationError(`Unknown MCP permission ${entry}`);
   }
   return entries as ProjectPermission[];
 }
