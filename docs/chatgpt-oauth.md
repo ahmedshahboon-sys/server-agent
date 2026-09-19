@@ -13,7 +13,7 @@ Server Agent can expose its existing bearer-authenticated MCP endpoint to ChatGP
 - Authorization responses include the RFC 9207 `iss` parameter.
 - Authorization codes are one-time, expire after five minutes, and are stored only as SHA-256 hashes.
 - Access tokens are opaque high-entropy bearer credentials stored through the normal Server Agent credential store as hashes only.
-- Refresh tokens are opaque, hash-only, bound to client/resource/principal, and rotated on every refresh.
+- Refresh tokens are opaque, hash-only, bound to client/resource/principal, and rotated on every refresh. They are issued only when the client requests the standard `offline_access` scope.
 - The OAuth principal cannot use global `*` project scope.
 - This implementation intentionally accepts only the read-oriented Server Agent permission set for OAuth. Write, deploy, restart, registry-management, recovery-run, and rollback-run permissions remain unavailable through this OAuth profile.
 
@@ -60,7 +60,7 @@ When enabled, Server Agent publishes:
 - `POST /oauth/authorize`
 - `POST /oauth/token`
 
-Unauthenticated MCP requests return HTTP `401` plus a `WWW-Authenticate` challenge pointing at the protected-resource metadata document. `tools/list` definitions also advertise an OAuth2 security scheme.
+Unauthenticated MCP requests return HTTP `401` plus a `WWW-Authenticate` challenge pointing at the protected-resource metadata document. `tools/list` definitions also advertise an OAuth2 security scheme. Authorization-server metadata advertises both `mcp:read` and `offline_access`; the latter enables refresh-token issuance for long-lived ChatGPT connectivity.
 
 ## ChatGPT connection flow
 
@@ -69,7 +69,7 @@ Unauthenticated MCP requests return HTTP `401` plus a `WWW-Authenticate` challen
 3. ChatGPT starts Authorization Code + PKCE (`S256`) and opens the Server Agent authorization page.
 4. The operator enters the Server Agent owner authorization secret.
 5. Server Agent sends a one-time authorization code to the exact registered ChatGPT redirect URI and includes `iss`.
-6. ChatGPT exchanges the code for a short-lived access token and rotating refresh token.
+6. ChatGPT requests `offline_access`, exchanges the code for a short-lived access token plus a rotating refresh token, and can renew the connection without reauthorization.
 7. ChatGPT calls `/mcp` with the access token. The normal Server Agent project scope, project capability, file sandbox, sensitive-file policy, and audit layers still apply.
 
 ## Operational notes

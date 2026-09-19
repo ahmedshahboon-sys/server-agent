@@ -81,6 +81,13 @@ function stringArray(value: unknown): string[] {
   return [...new Set(value as string[])];
 }
 
+function normalizedScope(value: string, baseScope: string): string | null {
+  const parts = [...new Set(value.split(/\s+/).map((item) => item.trim()).filter(Boolean))];
+  if (!parts.includes(baseScope)) return null;
+  if (parts.some((item) => item !== baseScope && item !== 'offline_access')) return null;
+  return parts.includes('offline_access') ? `${baseScope} offline_access` : baseScope;
+}
+
 export class OAuthService {
   private readonly loginAttempts = new FixedWindowRateLimiter(10, 60_000, 1024);
   private readonly registrationAttempts = new FixedWindowRateLimiter(20, 60_000, 1024);
@@ -127,7 +134,7 @@ export class OAuthService {
       grant_types_supported: ['authorization_code','refresh_token'],
       token_endpoint_auth_methods_supported: ['none'],
       code_challenge_methods_supported: ['S256'],
-      scopes_supported: [this.config.scope],
+      scopes_supported: [this.config.scope, 'offline_access'],
       authorization_response_iss_parameter_supported: true,
     });
   }
@@ -183,7 +190,7 @@ export class OAuthService {
       token_endpoint_auth_method: 'none',
       application_type: typeof payload['application_type'] === 'string' ? payload['application_type'] : 'web',
       client_name: clientName ?? 'ChatGPT MCP Client',
-      scope: this.config.scope,
+      scope: `${this.config.scope} offline_access`,
     });
   }
 
@@ -194,7 +201,7 @@ export class OAuthService {
     const hidden = [...p.entries()].map(([key,value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}">`).join('');
     const client = this.client(p.get('client_id') ?? '');
     const clientName = client?.client_name ?? 'ChatGPT';
-    return html(200, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Server Agent authorization</title><style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 20px;background:#111;color:#eee}form{background:#1d1d1d;padding:24px;border-radius:14px}input[type=password]{width:100%;box-sizing:border-box;padding:12px;margin:12px 0 18px;border-radius:8px;border:1px solid #555;background:#111;color:#fff}button{padding:12px 18px;border:0;border-radius:8px;font-weight:700;cursor:pointer}small{color:#aaa}</style></head><body><h1>Authorize Server Agent</h1><p><strong>${escapeHtml(clientName)}</strong> is requesting read-only access to the configured Server Agent projects.</p><p>OAuth scope: <code>${escapeHtml(this.config.scope)}</code></p><form method="post" action="/oauth/authorize">${hidden}<label>Owner authorization secret<input type="password" name="owner_secret" required autocomplete="current-password"></label><button type="submit">Authorize</button></form><p><small>No password is sent to ChatGPT. It is checked only by this Server Agent instance.</small></p></body></html>`);
+    return html(200, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Server Agent authorization</title><style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 20px;background:#111;color:#eee}form{background:#1d1d1d;padding:24px;border-radius:14px}input[type=password]{width:100%;box-sizing:border-box;padding:12px;margin:12px 0 18px;border-radius:8px;border:1px solid #555;background:#111;color:#fff}button{padding:12px 18px;border:0;border-radius:8px;font-weight:700;cursor:pointer}small{color:#aaa}</style></head><body><h1>Authorize Server Agent</h1><p><strong>${escapeHtml(clientName)}</strong> is requesting read-only access to the configured Server Agent projects.</p><p>OAuth scope: <code>${escapeHtml(p.get('scope') || this.config.scope)}</code></p><form method="post" action="/oauth/authorize">${hidden}<label>Owner authorization secret<input type="password" name="owner_secret" required autocomplete="current-password"></label><button type="submit">Authorize</button></form><p><small>No password is sent to ChatGPT. It is checked only by this Server Agent instance.</small></p></body></html>`);
   }
 
   private authorizePost(request: OAuthHttpRequest): OAuthHttpResponse {
@@ -236,7 +243,8 @@ export class OAuthService {
     const state = params.get('state') ?? '';
     const codeChallenge = params.get('code_challenge') ?? '';
     const codeChallengeMethod = params.get('code_challenge_method');
-    const scope = params.get('scope') || this.config.scope;
+    const requestedScope = params.get('scope') || this.config.scope;
+    const scope = normalizedScope(requestedScope, this.config.scope);
     const resource = params.get('resource') || this.config.resource;
 
     const client = this.client(clientId);
@@ -255,9 +263,11 @@ export class OAuthService {
 
     if (responseType !== 'code') return fail('unsupported_response_type', 'Only response_type=code is supported');
     if (codeChallengeMethod !== 'S256' || !/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge)) return fail('invalid_request', 'PKCE S256 code_challenge is required');
-    if (scope !== this.config.scope) return fail('invalid_scope', 'Requested OAuth scope is not supported');
+    if (scope === null) return fail('invalid_scope', 'Requested OAuth scope is not supported');
     if (resource !== this.config.resource) return fail('invalid_target', 'OAuth resource does not match this Server Agent');
-    return { params };
+    const normalized = new URLSearchParams(params);
+    normalized.set('scope', scope);
+    return { params: normalized };
   }
 
   private token(request: OAuthHttpRequest): OAuthHttpResponse {
@@ -314,6 +324,16 @@ export class OAuthService {
     const credentialId = `oauth-${randomUUID()}`;
     const expiresAt = new Date(Date.now() + this.config.accessTokenTtlSeconds * 1000).toISOString();
     this.authStore.createCredential(this.config.principal, credentialId, accessToken, expiresAt);
+
+    const includeRefresh = scope.split(/\s+/).includes('offline_access');
+    if (!includeRefresh) {
+      return json(200, {
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: this.config.accessTokenTtlSeconds,
+        scope,
+      });
+    }
 
     const refreshToken = token('sa_refresh');
     const refreshExpiresAt = new Date(Date.now() + this.config.refreshTokenTtlSeconds * 1000).toISOString();
