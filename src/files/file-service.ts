@@ -5,6 +5,7 @@ import type { Authorizer, ProjectStore } from '../core/interfaces.js';
 import type { Principal } from '../core/types.js';
 import { AuthorizationError, ConflictError, ValidationError } from '../core/errors.js';
 import { ProjectPathSandbox } from '../security/sandbox.js';
+import type { MutationGuard } from '../maintenance/maintenance-service.js';
 
 export interface FileServiceOptions {
   readonly maxFileBytes: number;
@@ -38,6 +39,7 @@ export class ProjectFileService {
     private readonly projects: ProjectStore,
     private readonly authorizer: Authorizer,
     private readonly options: FileServiceOptions,
+    private readonly mutationGuard?: MutationGuard,
   ) {}
 
   public async listFiles(projectId: string, principal: Principal, relativePath = '.'): Promise<readonly FileEntry[]> {
@@ -78,6 +80,7 @@ export class ProjectFileService {
     this.assertContentSize(content);
     const sandbox = await this.sandbox(projectId, 'files:write');
     const resolved = await sandbox.resolveForWrite(relativePath);
+    this.mutationGuard?.assertMutationAllowed(path.dirname(resolved), Buffer.byteLength(content));
     await this.withWriteLock(resolved, () => this.atomicWrite(resolved, content));
   }
 
@@ -95,6 +98,7 @@ export class ProjectFileService {
     this.authorizer.assertAllowed(principal, 'files:write', projectId);
     const sandbox = await this.sandbox(projectId, 'files:write');
     const resolved = await sandbox.resolveForRead(relativePath);
+    this.mutationGuard?.assertMutationAllowed(path.dirname(resolved));
     await this.withWriteLock(resolved, async () => {
       const current = await this.readResolved(resolved);
       const currentHash = digest(current);
@@ -104,6 +108,7 @@ export class ProjectFileService {
       if (current.indexOf(expected, first + expected.length) >= 0) throw new ValidationError('Expected text is not unique');
       const next = `${current.slice(0, first)}${replacement}${current.slice(first + expected.length)}`;
       this.assertContentSize(next);
+      this.mutationGuard?.assertMutationAllowed(path.dirname(resolved), Buffer.byteLength(next));
       await this.atomicWrite(resolved, next, currentHash);
     });
   }
