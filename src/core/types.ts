@@ -89,6 +89,7 @@ export interface ProjectRecord {
 export interface Principal {
   readonly id: string;
   readonly kind: 'system' | 'remote' | 'local';
+  readonly credentialId?: string;
   readonly projectScopes: readonly string[];
   readonly permissions: readonly ProjectPermission[];
 }
