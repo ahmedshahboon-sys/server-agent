@@ -124,7 +124,7 @@ test('OAuth service exposes discovery, DCR, PKCE code exchange, refresh, and bou
     const approved=new URLSearchParams(params);
     approved.set('owner_secret',ownerSecret);
     const authorization=oauth.handle(request('POST','/oauth/authorize',approved.toString(),{'content-type':'application/x-www-form-urlencoded'}));
-    assert.equal(authorization?.status,302);
+    assert.equal(authorization?.status,303);
     const location=new URL(authorization?.headers.location??'');
     assert.equal(location.origin,'https://chatgpt.com');
     assert.equal(location.searchParams.get('state'),'state-1');
@@ -155,7 +155,7 @@ test('OAuth service exposes discovery, DCR, PKCE code exchange, refresh, and bou
     const noOfflineApproved=new URLSearchParams(noOfflineParams);
     noOfflineApproved.set('owner_secret',ownerSecret);
     const noOfflineAuthorization=oauth.handle(request('POST','/oauth/authorize',noOfflineApproved.toString(),{'content-type':'application/x-www-form-urlencoded'}));
-    assert.equal(noOfflineAuthorization?.status,302);
+    assert.equal(noOfflineAuthorization?.status,303);
     const noOfflineLocation=new URL(noOfflineAuthorization?.headers.location??'');
     const noOfflineCode=noOfflineLocation.searchParams.get('code')??'';
     const noOfflineTokenBody=new URLSearchParams({
