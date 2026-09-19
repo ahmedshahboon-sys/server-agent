@@ -5,6 +5,7 @@ import { currentIdempotencyKey } from '../idempotency/context.js';
 import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from './operation-lease.js';
 import { redactError, redactValue } from '../security/redaction.js';
+import type { MutationGuard } from '../maintenance/maintenance-service.js';
 
 export type PersistentOperationType = 'VALIDATION' | 'DEPLOYMENT' | 'ROLLBACK';
 export type PersistentOperationStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
@@ -51,6 +52,7 @@ export class PersistentOperationManager {
     private readonly leases:OperationLeaseStore,
     private readonly instanceId:string,
     private readonly leaseTtlMs=60_000,
+    private readonly mutationGuard?:MutationGuard,
   ) {
     if(!Number.isInteger(leaseTtlMs)||leaseTtlMs<5_000||leaseTtlMs>86_400_000)throw new ValidationError('Persistent operation lease TTL must be between 5 seconds and 24 hours');
   }
@@ -75,6 +77,7 @@ export class PersistentOperationManager {
     idempotencyKey?:string,
   ):PersistentOperationRecord{
     if(this.shuttingDown)throw new ConflictError('Agent is shutting down and cannot start a persistent operation');
+    this.mutationGuard?.assertMutationAllowed(undefined,1_048_576);
     if(projectId.trim()===''||taskId.trim()==='')throw new ValidationError('Persistent operation project and task ids are required');
     const effectiveKey=idempotencyKey??currentIdempotencyKey();
     if(effectiveKey===undefined||effectiveKey.trim()==='')throw new ValidationError('idempotency_key is required for persistent operations');
