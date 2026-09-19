@@ -101,7 +101,7 @@ export class McpToolRegistry {
 
   private audit(context: ToolCallContext, toolName: string, projectId: string | undefined, success: boolean, errorCode: string | null): void {
     if (this.db === undefined) return;
-    this.db.raw.prepare('INSERT INTO mcp_audit(audit_id,request_id,principal_id,tool_name,project_id,success,error_code,created_at) VALUES(?,?,?,?,?,?,?,?)')
-      .run(randomUUID(), requestIdText(context.requestId), context.principal.id.slice(0, 128), toolName, projectId ?? null, success ? 1 : 0, errorCode, new Date().toISOString());
+    this.db.raw.prepare('INSERT INTO mcp_audit(audit_id,request_id,principal_id,tool_name,project_id,success,error_code,created_at,credential_id) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run(randomUUID(), requestIdText(context.requestId), context.principal.id.slice(0, 128), toolName, projectId ?? null, success ? 1 : 0, errorCode, new Date().toISOString(), context.principal.credentialId ?? null);
   }
 }
