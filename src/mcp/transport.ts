@@ -1,6 +1,6 @@
 import http, { type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Principal } from '../core/types.js';
-import { AuthenticationError, AuthorizationError, ProtocolError, ValidationError } from '../core/errors.js';
+import { AuthenticationError, AuthorizationError, ProtocolError, RateLimitError, ValidationError } from '../core/errors.js';
 import type { McpAuthenticator } from './auth.js';
 import type { McpToolRegistry } from './tool-registry.js';
 import { safeRemoteError, safeRemoteValue } from './remote-response.js';
@@ -101,7 +101,8 @@ export class McpHttpTransport {
       });
     } catch (error) {
       const safe = safeRemoteError(error);
-      return this.protocolError(null, error instanceof AuthenticationError ? 401 : 403, safe.code, safe.message, safe.data);
+      const status = error instanceof RateLimitError ? 429 : error instanceof AuthenticationError ? 401 : 403;
+      return this.protocolError(null, status, safe.code, safe.message, safe.data);
     }
 
     let rpc: JsonRpcRequest;
@@ -148,6 +149,7 @@ export class McpHttpTransport {
       return json(200, this.success(rpc.id, { resultType: 'complete', content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false }));
     } catch (error) {
       const safe = safeRemoteError(error);
+      if (error instanceof RateLimitError) return this.protocolError(rpc.id, 429, safe.code, safe.message, safe.data);
       if (error instanceof AuthenticationError || error instanceof AuthorizationError) return this.protocolError(rpc.id, 403, safe.code, safe.message, safe.data);
       const result = { resultType: 'complete', content: [{ type: 'text', text: JSON.stringify({ error: safe.message, errorCode: safe.data['errorCode'] }) }], structuredContent: { error: safe.message, errorCode: safe.data['errorCode'] }, isError: true };
       return json(200, this.success(rpc.id, result));
