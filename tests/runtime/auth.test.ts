@@ -63,3 +63,11 @@ test('runtime authentication validates bootstrap credential id and expiry metada
     SERVER_AGENT_MCP_PERMISSIONS: 'project:read',
   }), ValidationError);
 });
+
+test('runtime rejects the public example bearer placeholder even outside the installer', () => {
+  assert.throws(() => loadRuntimeAuthentication({
+    SERVER_AGENT_MCP_BEARER_TOKEN: 'CHANGE_ME_WITH_32_PLUS_RANDOM_CHARACTERS',
+    SERVER_AGENT_MCP_PROJECT_SCOPES: 'project-a',
+    SERVER_AGENT_MCP_PERMISSIONS: 'project:read',
+  }), AuthenticationError);
+});
