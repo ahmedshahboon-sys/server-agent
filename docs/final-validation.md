@@ -14,7 +14,7 @@ This repository is considered ready for operator-controlled installation only wh
 - shell syntax validation for install/uninstall helpers;
 - runtime smoke test using a temporary loopback MCP server;
 - `/healthz` liveness and `/readyz` readiness checks;
-- state-schema migration test from v7 to v8;
+- state-schema migration test through OAuth schema v9;
 - maintenance/retention and low-disk fail-closed regression tests;
 - modern MCP Tasks extension negotiation/routing regression tests;
 - official MCP TypeScript SDK v2 compatibility smoke;
@@ -73,6 +73,7 @@ install/
 docs/
   installation.md
   cloudflare-remote-mcp.md
+  chatgpt-oauth.md
   operations.md
   final-validation.md
 ```
@@ -82,7 +83,7 @@ The installer must not modify DNS, Nginx, firewall rules, Cloudflare, Docker, or
 ## Known intentional limits
 
 - The database adapter architecture is extensible, but this build implements direct project-database execution only for SQLite. Other adapter names are registered architecture targets and fail closed until implemented.
-- Cloudflare Tunnel/Access is documented but not installed or configured in Phase 5.
+- Cloudflare Tunnel/Access is documented but not installed or configured automatically. ChatGPT OAuth is optional and disabled by default until an operator supplies an HTTPS public base URL and owner secret.
 - Project service restart requires an explicit narrow OS-level authorization policy if used; none is created automatically.
 - Project registration is not automatic. Production projects are added later, starting with deliberately narrow permissions.
 
