@@ -9,6 +9,7 @@ import { redactError, redactValue } from '../security/redaction.js';
 import { currentIdempotencyKey } from '../idempotency/context.js';
 import { IdempotencyStore, idempotencyFingerprint } from '../idempotency/idempotency.js';
 import { OperationLeaseStore } from '../operations/operation-lease.js';
+import type { MutationGuard } from '../maintenance/maintenance-service.js';
 
 export interface JobRecord { readonly jobId:string; readonly taskId:string|null; readonly projectId:string; readonly commandId:string; readonly pid:number|null; readonly startedAt:string|null; readonly finishedAt:string|null; readonly status:JobStatus; readonly exitCode:number|null; readonly stdoutPath:string; readonly stderrPath:string; readonly error:unknown; }
 type Row={job_id:string;task_id:string|null;project_id:string;command_id:string;pid:number|null;started_at:string|null;finished_at:string|null;status:JobStatus;exit_code:number|null;stdout_path:string;stderr_path:string;error_json:string|null};
@@ -19,6 +20,7 @@ export interface JobManagerOptions {
   readonly idempotency?: IdempotencyStore;
   readonly leases?: OperationLeaseStore;
   readonly leaseTtlMs?: number;
+  readonly mutationGuard?: MutationGuard;
 }
 
 export class JobManager {
@@ -28,15 +30,18 @@ export class JobManager {
   private readonly idempotency:IdempotencyStore|undefined;
   private readonly leases:OperationLeaseStore|undefined;
   private readonly leaseTtlMs:number;
+  private readonly mutationGuard:MutationGuard|undefined;
 
   public constructor(private readonly db:SqliteDatabase,private readonly runner:RestrictedCommandRunner,private readonly outputDir:string,private readonly maxConcurrentJobs=1,options:JobManagerOptions={}){
     this.instanceId=options.instanceId??randomUUID();
     this.idempotency=options.idempotency;
     this.leases=options.leases;
     this.leaseTtlMs=options.leaseTtlMs??600_000;
+    this.mutationGuard=options.mutationGuard;
   }
 
   public async start(projectId:string,principal:Principal,commandId:string,taskId?:string,idempotencyKey?:string):Promise<JobRecord>{
+    this.mutationGuard?.assertMutationAllowed(this.outputDir,this.maxConcurrentJobs*this.leaseTtlMs);
     const effectiveKey=idempotencyKey??currentIdempotencyKey();
     const scope=`job-start:${projectId}`;
     const fingerprint=idempotencyFingerprint({projectId,commandId,taskId:taskId??null});
