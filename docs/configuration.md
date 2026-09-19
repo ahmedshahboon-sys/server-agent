@@ -19,6 +19,9 @@ Server Agent reads configuration from environment variables. The systemd package
 | `SERVER_AGENT_DATABASE_MAX_RESULT_BYTES` | `1048576` |
 | `SERVER_AGENT_MAX_LOG_OUTPUT_BYTES` | `262144` |
 | `SERVER_AGENT_MAX_RECOVERY_ATTEMPTS` | `3` |
+| `SERVER_AGENT_AUTH_ATTEMPTS_PER_MINUTE` | `30` per remote address |
+| `SERVER_AGENT_AUTH_REQUESTS_PER_MINUTE` | `120` per authenticated principal |
+| `SERVER_AGENT_AUDIT_RETENTION_DAYS` | `30`; pruned at startup |
 
 ## MCP transport
 
@@ -37,8 +40,10 @@ The recommended remote architecture keeps MCP on loopback and uses a local Cloud
 
 The executable runtime also requires:
 
-- `SERVER_AGENT_MCP_BEARER_TOKEN` — 32-4096 characters, generated and stored outside Git;
+- `SERVER_AGENT_MCP_BEARER_TOKEN` — optional bootstrap credential after initial provisioning; 32-4096 characters and never stored in SQLite as plaintext;
 - `SERVER_AGENT_MCP_PRINCIPAL_ID` — safe audit identity, default `chatgpt-remote`;
+- `SERVER_AGENT_MCP_CREDENTIAL_ID` — non-secret credential identifier, default `bootstrap-chatgpt`;
+- `SERVER_AGENT_MCP_CREDENTIAL_EXPIRES_AT` — optional ISO timestamp for the bootstrap credential;
 - `SERVER_AGENT_MCP_PROJECT_SCOPES` — comma-separated explicit project ids; `*` is reserved for intentional global administration and is not the example default;
 - `SERVER_AGENT_MCP_PERMISSIONS` — comma-separated known Server Agent permissions.
 
@@ -49,6 +54,12 @@ Authentication grants no project capability by itself. A call must pass all thre
 3. the registered project explicitly permits the operation.
 
 Start with read-oriented permissions and explicit project ids. The shipped environment examples use `example-project`, not `*`. Expand scope or grant registry-management permissions only for an intentional administrative workflow; normal runtime project capabilities do not grant registry-management authority.
+
+On first successful startup, the bootstrap bearer is hashed with SHA-256 and stored with its credential id, principal, expiry, revoke state, and last-used timestamp. A restart with the same credential id but different token fails closed; rotation must use a new credential id. Once at least one usable credential exists in SQLite, the bootstrap token may be removed from the environment. Use the local `auth:admin` CLI for additional principals, rotation, revoke, enable/disable, and credential listing. Bearer tokens are shown only when newly created or rotated.
+
+## Host helper
+
+`SERVER_AGENT_HOST_HELPER_SOCKET=/run/server-agent-host/hostctl.sock` routes systemd status/restart and project journal reads to the isolated root helper service. The helper accepts only structured requests for exact `.service` names present in `/etc/server-agent/allowed-services`. The main Agent never receives root, sudo, or broad journal-group membership.
 
 ## Secrets
 
