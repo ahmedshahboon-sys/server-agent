@@ -154,10 +154,10 @@ export class McpHttpTransport {
     if (rpc.method === 'tools/call') return this.callTool(rpc, request, principal,tasksSupported);
     if (['tasks/get','tasks/update','tasks/cancel'].includes(rpc.method)) {
       if(this.tasks===undefined)return this.protocolError(rpc.id,404,-32601,'Method not found');
-      if(!tasksSupported)return this.protocolError(rpc.id,400,-32020,'Missing required client capability',{requiredCapabilities:{extensions:{[MCP_TASKS_EXTENSION]:{}}}});
-      if(header(request.headers,'mcp-name')!==undefined)return this.protocolError(rpc.id,400,-32020,'Mcp-Name is not valid for task methods');
+      if(!tasksSupported)return this.protocolError(rpc.id,400,-32021,'Missing required client capability',{requiredCapabilities:{extensions:{[MCP_TASKS_EXTENSION]:{}}}});
       const taskId=rpc.params['taskId'];
       if(typeof taskId!=='string'||taskId==='')return this.protocolError(rpc.id,400,-32602,'taskId is required');
+      if(header(request.headers,'mcp-name')!==taskId)return this.protocolError(rpc.id,400,-32020,'Mcp-Name header does not match taskId');
       try{
         const result=rpc.method==='tasks/get'?this.tasks.get(taskId,principal):rpc.method==='tasks/update'?this.tasks.update(taskId,principal):this.tasks.cancel(taskId,principal);
         return json(200,this.success(rpc.id,result));
