@@ -54,6 +54,14 @@ export class FixedWindowRateLimiter {
     if (!Number.isInteger(maxKeys) || maxKeys < 16) throw new ValidationError('Rate-limit key bound is invalid');
   }
 
+  public isBlocked(key: string): boolean {
+    const current = this.now();
+    const existing = this.entries.get(key);
+    if (existing === undefined) return false;
+    if (current - existing.startedAt >= this.windowMs) { this.entries.delete(key); return false; }
+    return existing.count >= this.limit;
+  }
+
   public consume(key: string): boolean {
     const current = this.now();
     const existing = this.entries.get(key);
@@ -102,17 +110,31 @@ export class PersistentBearerAuthenticator implements McpAuthenticator {
   public async authenticate(request: AuthenticationRequest): Promise<Principal> {
     const now = this.now();
     const sourceKey = request.remoteAddress?.trim() || 'unknown';
-    if (!this.attempts.consume(sourceKey)) {
+    if (this.attempts.isBlocked(sourceKey)) {
       this.store.auditRateLimited(null, null, now);
       throw new RateLimitError();
     }
 
     const header = request.authorization;
-    if (header === undefined || !header.startsWith('Bearer ')) throw new AuthenticationError();
+    if (header === undefined || !header.startsWith('Bearer ')) {
+      this.attempts.consume(sourceKey);
+      this.store.auditFailure('MISSING_BEARER', now);
+      throw new AuthenticationError();
+    }
     const candidate = header.slice('Bearer '.length);
-    if (candidate.length === 0) throw new AuthenticationError();
+    if (candidate.length < 32 || candidate.length > 4096) {
+      this.attempts.consume(sourceKey);
+      this.store.auditFailure('MALFORMED_CREDENTIAL', now);
+      throw new AuthenticationError();
+    }
 
-    const principal = this.store.verify(candidate, now);
+    let principal: Principal;
+    try {
+      principal = this.store.verify(candidate, now);
+    } catch (error) {
+      if (error instanceof AuthenticationError) this.attempts.consume(sourceKey);
+      throw error;
+    }
     if (!this.requests.consume(principal.id)) {
       this.store.auditRateLimited(principal.id, principal.credentialId ?? null, now);
       throw new RateLimitError();
