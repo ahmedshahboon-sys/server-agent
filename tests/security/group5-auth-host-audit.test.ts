@@ -115,7 +115,9 @@ test('MCP audit records the non-secret credential id for authenticated tool acti
     const principal={...principalA,credentialId:'cred-a'};
     await tools.call('group5_probe',{}, {principal,requestId:'g5'});
     const row=db.raw.prepare("SELECT principal_id,credential_id,success FROM mcp_audit WHERE tool_name='group5_probe'").get() as unknown as {principal_id:string;credential_id:string;success:number};
-    assert.deepEqual(row,{principal_id:'principal-a',credential_id:'cred-a',success:1});
+    assert.equal(row.principal_id,'principal-a');
+    assert.equal(row.credential_id,'cred-a');
+    assert.equal(row.success,1);
   }finally{db.close();}
 });
 
