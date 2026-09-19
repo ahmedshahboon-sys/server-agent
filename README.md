@@ -15,7 +15,7 @@ Server Agent is a production-safety-focused control layer for operating multiple
 - Deployment engine with prechecks, validation, migration evidence, deployment records, optional service restart, post-deploy health, and rollback references.
 - Evidence-driven Recovery Engine with bounded attempts and explicit `RECOVERY_REQUIRED`, rollback, and `WAITING_FOR_USER` states.
 - Guarded Rollback Engine with READY plan, Git revalidation, explicit rollback command, migration-safety checks, and health validation.
-- Stateless MCP `2026-07-28` HTTP transport with bearer authentication abstraction, project/tool authorization, request metadata validation, Origin/body bounds, redacted responses, and MCP audit.
+- Stateless MCP `2026-07-28` HTTP transport with persistent bearer authentication plus optional ChatGPT-compatible OAuth 2.1 (DCR, PKCE S256, RFC 9207 issuer binding), project/tool authorization, request metadata validation, Origin/body bounds, redacted responses, and MCP audit.
 - HTTP health SSRF protection using DNS resolution, private/reserved-address rejection, validated-IP connection pinning, and no redirects.
 - Executable runtime entrypoint, non-root systemd template, idempotent install helper, safe uninstall helper, Cloudflare remote-MCP preparation, backup/upgrade/recovery documentation, and runtime/memory smoke validation.
 
@@ -56,5 +56,6 @@ Important documentation:
 - `docs/recovery.md`
 - `docs/installation.md`
 - `docs/cloudflare-remote-mcp.md`
+- `docs/chatgpt-oauth.md`
 - `docs/operations.md`
 - `docs/final-validation.md`
