@@ -6,9 +6,28 @@ A project contains an ID, name, absolute root, enabled flag, runtime, optional s
 
 ## Disable vs remove
 
-`disable_project` keeps the project visible in the registry but prevents operational access until it is intentionally re-enabled through configuration management.
+`disable_project` keeps the project visible in the registry but prevents operational access. `enable_project` restores the registry entry only when the caller has the dedicated `project:update:state` permission. Neither tool touches project files.
 
 `remove_project` is implemented as an archive/tombstone operation rather than a physical database delete. The project becomes unavailable to normal list/get operations, while its internal row remains so historical tasks, jobs, deployments, health checks, recovery evidence, and audit foreign keys stay valid. Archived project IDs are not silently reusable. Project files are never deleted by either action.
+
+## Registry management authorization
+
+Registry-management permissions are deliberately separate from a project's runtime capability list. Supported management permissions are:
+
+- `project:register`;
+- `project:update:metadata`;
+- `project:update:state`;
+- `project:update:root`;
+- `project:update:commands`;
+- `project:update:database`;
+- `project:update:deployment`;
+- `project:update:capabilities`;
+- `project:disable`;
+- `project:archive`.
+
+`update_project` compares the stored registration with the requested replacement and requires the permission for every field group that actually changed. Root and capability changes additionally require global (`*`) scope. A no-op update is rejected. Project capability lists cannot contain registry-management permissions.
+
+New registrations require the explicit registration management set and global scope. This prevents a normal project-scoped token from repointing a project root, replacing command definitions, or widening capabilities.
 
 ## Start narrow
 
