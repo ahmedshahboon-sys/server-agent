@@ -25,6 +25,12 @@ function assertUnique(values: readonly unknown[], name: string): void {
   if (new Set(values).size !== values.length) throw new ValidationError(`${name} must not contain duplicates`);
 }
 
+function assertKnownKeys(value: unknown, allowed: readonly string[], name: string): void {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError(`${name} must be an object`);
+  const known = new Set(allowed);
+  for (const key of Object.keys(value)) if (!known.has(key)) throw new ValidationError(`${name} contains unknown field ${key}`);
+}
+
 function assertArgv(argv: readonly string[] | undefined, name: string): void {
   if (argv === undefined) return;
   if (!Array.isArray(argv) || argv.length === 0 || argv.length > 64) throw new ValidationError(`${name} must contain 1-64 argv entries`);
@@ -32,6 +38,11 @@ function assertArgv(argv: readonly string[] | undefined, name: string): void {
 }
 
 export function validateProjectInput(project: Omit<ProjectRecord, 'createdAt' | 'updatedAt'>): void {
+  assertKnownKeys(project, ['id','name','root','enabled','runtime','serviceName','domain','ports','health','commands','database','deployment','permissions','environmentRefs','metadata'], 'project');
+  assertKnownKeys(project.health, ['type','scheme','port','path','timeoutMs','expectedStatus'], 'project.health');
+  assertKnownKeys(project.commands, ['build','test','deploy','rollback','allowed','validation'], 'project.commands');
+  assertKnownKeys(project.database, ['adapter','secretRef','defaultAccess','metadata'], 'project.database');
+  assertKnownKeys(project.deployment, ['strategy','branch','requireClean','validationRequired','restartService','healthRequired'], 'project.deployment');
   if (!ID_PATTERN.test(project.id)) throw new ValidationError('Project id must be 2-64 lowercase safe characters');
   if (typeof project.name !== 'string' || project.name.trim().length === 0 || project.name.length > 256) throw new ValidationError('Project name is invalid');
   if (typeof project.root !== 'string' || !path.isAbsolute(project.root) || project.root.includes('\0') || project.root.length > 4096) throw new ValidationError('Project root must be a bounded absolute path');
