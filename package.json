@@ -20,8 +20,10 @@
     "deps:validate": "npm ls --all",
     "validate:package": "node scripts/validate-install-package.mjs",
     "perf:sanity": "node scripts/runtime-sanity.mjs",
-    "validate": "npm run deps:validate && npm run lint && npm run typecheck && npm run test && npm run test:security && npm run build && npm run security:secrets && npm run validate:package && npm run perf:sanity",
-    "auth:admin": "node dist/runtime/auth-admin.js"
+    "validate": "npm run deps:validate && npm run deps:audit && npm run lint && npm run typecheck && npm run test && npm run test:security && npm run build && npm run security:secrets && npm run validate:package && npm run perf:sanity",
+    "auth:admin": "node dist/runtime/auth-admin.js",
+    "deps:audit": "npm audit --audit-level=high",
+    "compat:mcp-sdk": "node scripts/mcp-sdk-compat.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.1",
